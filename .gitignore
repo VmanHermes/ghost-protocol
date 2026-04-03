@@ -6,6 +6,7 @@ __pycache__/
 backend/.venv/
 backend/.pytest_cache/
 backend/data/
+data/*.db
 desktop/node_modules/
 desktop/src-tauri/target/
 desktop/dist/

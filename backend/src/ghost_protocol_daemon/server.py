@@ -16,6 +16,17 @@ from .store import HermesStore
 from .telegram_bridge import TelegramBridge
 
 
+def _apply_cors(request: web.Request, response: web.StreamResponse) -> web.StreamResponse:
+    origin = request.headers.get('Origin')
+    if not origin:
+        return response
+    response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Vary'] = 'Origin'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    return response
+
+
 def _client_ip(request: web.Request) -> str:
     peername = request.transport.get_extra_info('peername') if request.transport else None
     if isinstance(peername, tuple) and peername:
@@ -31,6 +42,14 @@ async def tailscale_only_middleware(request: web.Request, handler):
     if not any(ip in network for network in allowed_networks):
         return web.json_response({'error': 'forbidden', 'message': f'client {ip} is not in the configured private allowlist'}, status=403)
     return await handler(request)
+
+
+@web.middleware
+async def cors_middleware(request: web.Request, handler):
+    if request.method == 'OPTIONS':
+        return _apply_cors(request, web.Response(status=204))
+    response = await handler(request)
+    return _apply_cors(request, response)
 
 
 async def health(request: web.Request) -> web.Response:
@@ -154,7 +173,7 @@ async def resolve_approval(request: web.Request) -> web.Response:
     approval_id = request.match_info['approval_id']
     payload = await request.json()
     status = payload.get('status', 'approved')
-    resolved_by = payload.get('resolvedBy', 'desktop-user')
+    resolved_by = payload.get('resolvedBy', 'ghost-protocol-user')
     reason = payload.get('reason')
     record = store.resolve_approval(approval_id, status, resolved_by, reason)
     if not record:
@@ -237,7 +256,7 @@ async def create_app() -> web.Application:
     runtime = HermesRuntimeAdapter(settings, store, bus)
     telegram_bridge = TelegramBridge(settings, bus, store, runtime)
     allowed_networks = [ipaddress.ip_network(item, strict=False) for item in settings.allowed_cidrs]
-    app = web.Application(middlewares=[tailscale_only_middleware])
+    app = web.Application(middlewares=[cors_middleware, tailscale_only_middleware])
     app['settings'] = settings
     app['db'] = db
     app['store'] = store

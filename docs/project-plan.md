@@ -1,13 +1,13 @@
-# Hermes Desktop v1 project plan
+# Ghost Protocol project plan
 
 ## Goal
-Build a Tauri 2 desktop application that becomes the primary interface for Hermes, backed by a headless daemon that exposes explicit HTTP and WebSocket APIs over Tailscale.
+Build a Tauri 2 Ghost Protocol application that becomes the primary interface for Hermes, backed by a headless daemon that exposes explicit HTTP and WebSocket APIs over Tailscale.
 
 ## Phase 1 focus
 1. Inspect current Hermes runtime, gateway, and Telegram integration.
 2. Define a stable event envelope and resumable WebSocket protocol.
 3. Implement a smallest useful end-to-end backend slice.
-4. Scaffold the desktop app around that transport.
+4. Scaffold the Ghost Protocol app around that transport.
 
 ## Existing architecture summary
 - The current Hermes runtime lives at `/home/vmandesk/.hermes/hermes-agent`.
@@ -25,7 +25,7 @@ Phase 1 uses a thin sidecar daemon in this project rather than invasive refactor
 - start a run that invokes the existing `AIAgent`
 - emit and persist run/message/tool/status events
 - stream events over WebSocket with resume by sequence
-- show conversation list, chat, run live state, and event timeline in the desktop app
+- show conversation list, chat, run live state, and event timeline in the Ghost Protocol app
 
 ## Deferred after Phase 1
 - Telegram fully routed through the new event pipeline

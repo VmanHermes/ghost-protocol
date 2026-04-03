@@ -116,7 +116,7 @@ type ConversationDetail = {
   runs: RunRecord[];
 };
 
-const defaultBaseUrl = localStorage.getItem("hermes.desktop.baseUrl") ?? "http://127.0.0.1:8787";
+const defaultBaseUrl = localStorage.getItem("ghost-protocol.baseUrl") ?? "http://127.0.0.1:8787";
 
 function wsUrlFromHttp(baseUrl: string) {
   if (baseUrl.startsWith("https://")) return baseUrl.replace("https://", "wss://") + "/ws";
@@ -315,7 +315,7 @@ function App() {
 
   async function handleApplyBaseUrl(event: FormEvent) {
     event.preventDefault();
-    localStorage.setItem("hermes.desktop.baseUrl", draftBaseUrl);
+    localStorage.setItem("ghost-protocol.baseUrl", draftBaseUrl);
     setBaseUrl(draftBaseUrl);
     setConnectionState("connecting");
     setConnectionMessage("Reconnecting…");
@@ -347,7 +347,7 @@ function App() {
     try {
       await api(baseUrl, `/api/approvals/${approvalId}/resolve`, {
         method: "POST",
-        body: JSON.stringify({ status, resolvedBy: "desktop-app" }),
+        body: JSON.stringify({ status, resolvedBy: "ghost-protocol-app" }),
       });
       await Promise.all([refreshSystemStatus(), activeRunId ? loadRun(activeRunId) : Promise.resolve()]);
     } catch (error) {

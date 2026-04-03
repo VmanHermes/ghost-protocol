@@ -3,9 +3,9 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermes-desktop-daemon"
+name = "ghost_protocol_daemon"
 version = "0.1.0"
-description = "Headless daemon for Hermes Desktop v1"
+description = "Headless daemon for Ghost Protocol"
 requires-python = ">=3.11"
 dependencies = [
   "aiohttp>=3.9,<4",

@@ -4,7 +4,7 @@
 - inspected `/home/vmandesk/.hermes/hermes-agent/run_agent.py`, `gateway/run.py`, `gateway/platforms/telegram.py`, and `gateway/platforms/api_server.py`
 - confirmed the existing Hermes runtime already exposes callbacks for lifecycle, status, tool start/complete, and streaming
 - built a sidecar daemon rather than rewriting Hermes orchestration in place
-- added a persistent event log, HTTP API, WebSocket replay/subscribe path, and an initial Tauri desktop shell
+- added a persistent event log, HTTP API, WebSocket replay/subscribe path, and an initial Tauri Ghost Protocol shell
 
 ## Phase 2 summary
 - extended the backend schema with:
@@ -23,7 +23,7 @@
 - added a root-agent projection path using `agent_spawned` and `agent_updated`
 - made usage emission persist to `usage_records`
 - added an outbound Telegram bridge that consumes the shared daemon event stream and sends concise progress/final summaries
-- updated the desktop app to surface:
+- updated the Ghost Protocol app to surface:
   - system status
   - active agents
   - approvals queue
@@ -41,7 +41,7 @@
   - `/approve` and `/deny` handling for pending approvals
 
 ## Validation completed
-- backend modules compile with `python3 -m py_compile backend/src/hermes_desktop_daemon/*.py`
+- backend modules compile with `python3 -m py_compile backend/src/ghost_protocol_daemon/*.py`
 - frontend build succeeds with `npm run build`
 - daemon `/health` and `/api/system/status` return expected data
 - conversation create/message append/run start succeed

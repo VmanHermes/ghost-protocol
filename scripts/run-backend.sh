@@ -8,4 +8,4 @@ if [ ! -d backend/.venv ]; then
 else
   source backend/.venv/bin/activate
 fi
-python -m hermes_desktop_daemon
+python -m ghost_protocol_daemon

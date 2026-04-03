@@ -155,7 +155,7 @@ class TelegramBridge:
                 return summary
             return None
         if event_type == 'approval_requested':
-            return f"Approval needed: {summary}. Reply /approve or /deny. Use the desktop app for full detail."
+            return f"Approval needed: {summary}. Reply /approve or /deny. Use the Ghost Protocol app for full detail."
         if event_type == 'run_finished':
             status = payload.get('status', 'done')
             return f"Run finished: {status}"

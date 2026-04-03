@@ -1,4 +1,4 @@
-# Hermes Desktop v1 architecture notes
+# Ghost Protocol architecture notes
 
 ## Event envelope
 Every event uses:

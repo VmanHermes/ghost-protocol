@@ -4,16 +4,31 @@
 Recommended local run using the existing Hermes environment:
 
 ```bash
-cd /home/vmandesk/Work/projects/hermes-desktop-v1
+cd /home/vmandesk/Work/projects/ghost-protocol
 set -a
 source .env
 set +a
-PYTHONPATH=backend/src /home/vmandesk/.hermes/hermes-agent/venv/bin/python -m hermes_desktop_daemon.server
+PYTHONPATH=backend/src /home/vmandesk/.hermes/hermes-agent/venv/bin/python -m ghost_protocol_daemon.server
 ```
+
+## Backend service
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now ghost-protocol-backend.service
+systemctl --user status ghost-protocol-backend.service --no-pager
+```
+
+## Desktop launcher
+```bash
+cd /home/vmandesk/Work/projects/ghost-protocol
+./scripts/open-app.sh
+```
+
+A desktop entry named `Ghost Protocol` is also installed in `~/.local/share/applications/`.
 
 ## Desktop app
 ```bash
-cd /home/vmandesk/Work/projects/hermes-desktop-v1/desktop
+cd /home/vmandesk/Work/projects/ghost-protocol/desktop
 npm install
 npm run tauri dev
 ```
@@ -21,7 +36,7 @@ npm run tauri dev
 ## Validation commands
 Backend compile:
 ```bash
-python3 -m py_compile backend/src/hermes_desktop_daemon/*.py
+python3 -m py_compile backend/src/ghost_protocol_daemon/*.py
 ```
 
 Frontend build:
@@ -49,6 +64,6 @@ cd desktop/src-tauri && cargo check
 ## Telegram bridge
 Phase 2 adds an outbound Telegram bridge driven from the same daemon event stream.
 Set these in `.env` if you want progress + final updates:
-- `HERMES_TELEGRAM_ENABLED=1`
-- `HERMES_TELEGRAM_BOT_TOKEN=...`
-- `HERMES_TELEGRAM_CHAT_ID=...`
+- `GHOST_PROTOCOL_TELEGRAM_ENABLED=1`
+- `GHOST_PROTOCOL_TELEGRAM_BOT_TOKEN=***`
+- `GHOST_PROTOCOL_TELEGRAM_CHAT_ID=...`

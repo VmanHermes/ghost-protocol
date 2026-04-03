@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/.venv/
+backend/.pytest_cache/
+backend/data/
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/dist/
+logs/*.log

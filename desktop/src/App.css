@@ -1,0 +1,264 @@
+:root {
+  color: #e5e7eb;
+  background: #0f172a;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.4;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100vh;
+  background: #0f172a;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 10px;
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #334155;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #334155;
+  background: #020617;
+  color: #e2e8f0;
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
+  gap: 12px;
+  padding: 12px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 18px;
+  padding: 14px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.panel-header h2,
+.panel-header h3,
+.panel-header p {
+  margin: 0;
+}
+
+.stack-sm,
+.stack-md {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.muted {
+  color: #94a3b8;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #cbd5e1;
+}
+
+.status-pill {
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  border: 1px solid #334155;
+}
+
+.status-pill.connected {
+  background: rgba(16, 185, 129, 0.15);
+  color: #a7f3d0;
+}
+
+.status-pill.connecting {
+  background: rgba(59, 130, 246, 0.15);
+  color: #bfdbfe;
+}
+
+.status-pill.error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fecaca;
+}
+
+.status-pill.idle {
+  background: rgba(148, 163, 184, 0.15);
+  color: #cbd5e1;
+}
+
+.conversation-list,
+.run-list,
+.timeline,
+.messages {
+  overflow: auto;
+  min-height: 0;
+}
+
+.conversation-item,
+.run-item {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.conversation-item.selected,
+.run-item.selected {
+  border-color: #60a5fa;
+  background: #172554;
+}
+
+.chat .messages {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+
+.message {
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  padding: 12px;
+  background: #020617;
+}
+
+.message.user {
+  border-color: #1d4ed8;
+}
+
+.message.assistant {
+  border-color: #065f46;
+}
+
+.message header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #cbd5e1;
+}
+
+.message pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+
+.composer {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stats-grid div {
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 10px;
+  background: #020617;
+}
+
+.stats-grid span {
+  display: block;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+}
+
+.timeline.compact {
+  max-height: 200px;
+}
+
+.timeline-item {
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 10px;
+  background: #020617;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline-item span {
+  color: #cbd5e1;
+}
+
+@media (max-width: 1280px) {
+  .shell {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .inspector {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 920px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}

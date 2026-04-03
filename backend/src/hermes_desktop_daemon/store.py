@@ -5,7 +5,17 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .contracts import ConversationRecord, EventEnvelope, MessageRecord, RunRecord
+from .contracts import (
+    AgentRecord,
+    ApprovalRecord,
+    ArtifactRecord,
+    ConversationRecord,
+    EventEnvelope,
+    MessageRecord,
+    RunAttemptRecord,
+    RunRecord,
+    UsageRecord,
+)
 from .db import Database
 
 
@@ -79,6 +89,28 @@ class HermesStore:
             )
         return RunRecord(id=run_id, conversationId=conversation_id, status='pending', model=model, startedAt=ts, heartbeatAt=ts)
 
+    def create_run_attempt(self, run_id: str, attempt_number: int = 1, status: str = 'running') -> RunAttemptRecord:
+        attempt_id = str(uuid4())
+        ts = now_iso()
+        with self.db.connection() as conn:
+            conn.execute(
+                'INSERT INTO run_attempts (id, run_id, attempt_number, status, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, NULL, NULL)',
+                (attempt_id, run_id, attempt_number, status, ts),
+            )
+        return RunAttemptRecord(id=attempt_id, runId=run_id, attemptNumber=attempt_number, status=status, startedAt=ts)
+
+    def finish_run_attempt(self, attempt_id: str, status: str, error: str | None = None) -> None:
+        with self.db.connection() as conn:
+            conn.execute(
+                'UPDATE run_attempts SET status = ?, finished_at = ?, error = ? WHERE id = ?',
+                (status, now_iso(), error, attempt_id),
+            )
+
+    def list_run_attempts(self, run_id: str) -> list[RunAttemptRecord]:
+        with self.db.connection() as conn:
+            rows = conn.execute('SELECT * FROM run_attempts WHERE run_id = ? ORDER BY attempt_number ASC', (run_id,)).fetchall()
+        return [RunAttemptRecord(id=row['id'], runId=row['run_id'], attemptNumber=row['attempt_number'], status=row['status'], startedAt=row['started_at'], finishedAt=row['finished_at'], error=row['error']) for row in rows]
+
     def update_run(self, run_id: str, **fields: Any) -> None:
         allowed = {
             'status': 'status',
@@ -94,21 +126,14 @@ class HermesStore:
         }
         updates = []
         values = []
-        live_updates = []
-        live_values = []
         for key, column in allowed.items():
             if key in fields:
                 updates.append(f'{column} = ?')
                 values.append(fields[key])
-                if column in {'status', 'waiting_reason', 'current_step', 'token_usage', 'cost_estimate'}:
-                    live_updates.append(f'{column} = ?')
-                    live_values.append(fields[key])
         if not updates:
             return
         with self.db.connection() as conn:
             conn.execute(f"UPDATE runs SET {', '.join(updates)} WHERE id = ?", (*values, run_id))
-            if live_updates:
-                conn.execute(f"UPDATE run_live_projection SET {', '.join(live_updates)}, updated_at = ? WHERE run_id = ?", (*live_values, now_iso(), run_id))
 
     def get_run(self, run_id: str) -> RunRecord | None:
         with self.db.connection() as conn:
@@ -125,7 +150,107 @@ class HermesStore:
     def list_runs(self) -> list[RunRecord]:
         with self.db.connection() as conn:
             rows = conn.execute('SELECT id FROM runs ORDER BY started_at DESC').fetchall()
-        return [self.get_run(row['id']) for row in rows if self.get_run(row['id']) is not None]
+        results: list[RunRecord] = []
+        for row in rows:
+            item = self.get_run(row['id'])
+            if item:
+                results.append(item)
+        return results
+
+    def upsert_agent(
+        self,
+        *,
+        agent_id: str,
+        run_id: str,
+        lineage: str,
+        name: str,
+        agent_type: str,
+        status: str,
+        current_task: str | None = None,
+        model: str | None = None,
+        token_usage: int = 0,
+        parent_agent_id: str | None = None,
+        finished_at: str | None = None,
+    ) -> AgentRecord:
+        ts = now_iso()
+        with self.db.connection() as conn:
+            existing = conn.execute('SELECT started_at FROM agents WHERE id = ?', (agent_id,)).fetchone()
+            started_at = existing['started_at'] if existing else ts
+            conn.execute(
+                '''INSERT OR REPLACE INTO agents (
+                id, run_id, parent_agent_id, lineage, name, type, status, current_task,
+                model, token_usage, started_at, finished_at, heartbeat_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (agent_id, run_id, parent_agent_id, lineage, name, agent_type, status, current_task, model, token_usage, started_at, finished_at, ts),
+            )
+        return AgentRecord(id=agent_id, runId=run_id, parentAgentId=parent_agent_id, lineage=lineage, name=name, type=agent_type, status=status, currentTask=current_task, model=model, tokenUsage=token_usage, startedAt=started_at, finishedAt=finished_at, heartbeatAt=ts)
+
+    def list_agents(self, *, active_only: bool = False) -> list[AgentRecord]:
+        query = 'SELECT * FROM agents'
+        if active_only:
+            query += " WHERE status IN ('running', 'waiting')"
+        query += ' ORDER BY started_at DESC'
+        with self.db.connection() as conn:
+            rows = conn.execute(query).fetchall()
+        return [AgentRecord(id=row['id'], runId=row['run_id'], parentAgentId=row['parent_agent_id'], lineage=row['lineage'], name=row['name'], type=row['type'], status=row['status'], currentTask=row['current_task'], model=row['model'], tokenUsage=row['token_usage'], startedAt=row['started_at'], finishedAt=row['finished_at'], heartbeatAt=row['heartbeat_at']) for row in rows]
+
+    def create_approval(self, run_id: str, approval_type: str, payload: dict[str, Any], requested_by_event_id: str | None = None) -> ApprovalRecord:
+        approval_id = str(uuid4())
+        ts = now_iso()
+        with self.db.connection() as conn:
+            conn.execute(
+                'INSERT INTO approvals (id, run_id, type, payload_json, status, requested_at, requested_by_event_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (approval_id, run_id, approval_type, json.dumps(payload, ensure_ascii=False), 'pending', ts, requested_by_event_id),
+            )
+        return ApprovalRecord(id=approval_id, runId=run_id, type=approval_type, payload=payload, status='pending', requestedAt=ts, requestedByEventId=requested_by_event_id)
+
+    def resolve_approval(self, approval_id: str, status: str, resolved_by: str, reason: str | None = None) -> ApprovalRecord | None:
+        with self.db.connection() as conn:
+            row = conn.execute('SELECT * FROM approvals WHERE id = ?', (approval_id,)).fetchone()
+            if not row:
+                return None
+            resolved_at = now_iso()
+            conn.execute(
+                'UPDATE approvals SET status = ?, resolved_at = ?, resolved_by = ?, resolution_reason = ? WHERE id = ?',
+                (status, resolved_at, resolved_by, reason, approval_id),
+            )
+            row = conn.execute('SELECT * FROM approvals WHERE id = ?', (approval_id,)).fetchone()
+        return self._approval_from_row(row)
+
+    def list_pending_approvals(self) -> list[ApprovalRecord]:
+        with self.db.connection() as conn:
+            rows = conn.execute("SELECT * FROM approvals WHERE status = 'pending' ORDER BY requested_at ASC").fetchall()
+        return [self._approval_from_row(row) for row in rows]
+
+    def _approval_from_row(self, row) -> ApprovalRecord:
+        return ApprovalRecord(
+            id=row['id'], runId=row['run_id'], type=row['type'], payload=json.loads(row['payload_json']), status=row['status'],
+            requestedAt=row['requested_at'], expiresAt=row['expires_at'], requestedByEventId=row['requested_by_event_id'],
+            resolvedAt=row['resolved_at'], resolvedBy=row['resolved_by'], resolutionReason=row['resolution_reason'], scope=row['scope']
+        )
+
+    def create_usage_record(self, entity_type: str, entity_id: str, model: str | None, tokens_in: int, tokens_out: int, cost: float) -> UsageRecord:
+        usage_id = str(uuid4())
+        ts = now_iso()
+        with self.db.connection() as conn:
+            conn.execute(
+                'INSERT INTO usage_records (id, entity_type, entity_id, model, tokens_in, tokens_out, cost, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                (usage_id, entity_type, entity_id, model, tokens_in, tokens_out, cost, ts),
+            )
+        return UsageRecord(id=usage_id, entityType=entity_type, entityId=entity_id, model=model, tokensIn=tokens_in, tokensOut=tokens_out, cost=cost, createdAt=ts)
+
+    def list_usage_records(self, *, entity_type: str | None = None, entity_id: str | None = None) -> list[UsageRecord]:
+        clauses = ['1=1']
+        values: list[Any] = []
+        if entity_type:
+            clauses.append('entity_type = ?')
+            values.append(entity_type)
+        if entity_id:
+            clauses.append('entity_id = ?')
+            values.append(entity_id)
+        with self.db.connection() as conn:
+            rows = conn.execute(f"SELECT * FROM usage_records WHERE {' AND '.join(clauses)} ORDER BY created_at DESC", values).fetchall()
+        return [UsageRecord(id=row['id'], entityType=row['entity_type'], entityId=row['entity_id'], model=row['model'], tokensIn=row['tokens_in'], tokensOut=row['tokens_out'], cost=row['cost'], createdAt=row['created_at']) for row in rows]
 
     def append_event(self, event: EventEnvelope) -> EventEnvelope:
         with self.db.connection() as conn:
@@ -147,7 +272,64 @@ class HermesStore:
                     'INSERT INTO run_timeline_projection (run_id, seq, event_type, summary, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
                     (event.runId, event.seq, event.type, event.summary, json.dumps(event.payload, ensure_ascii=False), event.ts),
                 )
+            self._apply_event_projection(conn, event)
         return event
+
+    def _apply_event_projection(self, conn, event: EventEnvelope) -> None:
+        if not event.runId:
+            return
+        current = conn.execute('SELECT * FROM run_live_projection WHERE run_id = ?', (event.runId,)).fetchone()
+        if current is None and event.conversationId:
+            conn.execute(
+                '''INSERT OR REPLACE INTO run_live_projection (
+                run_id, conversation_id, status, waiting_reason, current_step, active_agents, token_usage, cost_estimate, pending_approvals, updated_at
+                ) VALUES (?, ?, 'pending', NULL, NULL, 0, 0, 0, 0, ?)''',
+                (event.runId, event.conversationId, event.ts),
+            )
+            current = conn.execute('SELECT * FROM run_live_projection WHERE run_id = ?', (event.runId,)).fetchone()
+        if current is None:
+            return
+        status = current['status']
+        waiting_reason = current['waiting_reason']
+        current_step = current['current_step']
+        active_agents = current['active_agents']
+        token_usage = current['token_usage']
+        cost_estimate = current['cost_estimate']
+        pending_approvals = current['pending_approvals']
+
+        if event.type in {'run_started', 'run_status_changed', 'run_finished', 'error'}:
+            status = str(event.payload.get('status', status or 'running'))
+            current_step = str(event.payload.get('currentStep') or event.payload.get('message') or event.summary)
+            waiting_reason = event.payload.get('waitingReason', waiting_reason)
+            if event.type == 'error':
+                status = 'error'
+        elif event.type == 'agent_spawned':
+            active_agents += 1
+        elif event.type == 'agent_updated':
+            agent_status = str(event.payload.get('status', ''))
+            if agent_status in {'done', 'error', 'cancelled'} and active_agents > 0:
+                active_agents -= 1
+        elif event.type == 'usage_recorded':
+            tokens_in = int(event.payload.get('tokensIn', 0) or 0)
+            tokens_out = int(event.payload.get('tokensOut', 0) or 0)
+            token_usage = tokens_in + tokens_out
+            cost_estimate = float(event.payload.get('cost', cost_estimate) or 0.0)
+        elif event.type == 'approval_requested':
+            pending_approvals += 1
+            status = 'waiting'
+            waiting_reason = 'approval_requested'
+        elif event.type == 'approval_resolved' and pending_approvals > 0:
+            pending_approvals -= 1
+            waiting_reason = None
+            if status == 'waiting':
+                status = 'running'
+
+        conn.execute(
+            '''UPDATE run_live_projection SET
+            status = ?, waiting_reason = ?, current_step = ?, active_agents = ?, token_usage = ?, cost_estimate = ?, pending_approvals = ?, updated_at = ?
+            WHERE run_id = ?''',
+            (status, waiting_reason, current_step, active_agents, token_usage, cost_estimate, pending_approvals, event.ts, event.runId),
+        )
 
     def list_events(self, *, after_seq: int = 0, conversation_id: str | None = None, run_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         clauses = ['seq > ?']
@@ -183,3 +365,41 @@ class HermesStore:
         with self.db.connection() as conn:
             rows = conn.execute('SELECT * FROM run_timeline_projection WHERE run_id = ? ORDER BY seq ASC', (run_id,)).fetchall()
         return [dict(row) | {'payload': json.loads(row['payload_json'])} for row in rows]
+
+    def list_artifacts(self, run_id: str) -> list[ArtifactRecord]:
+        with self.db.connection() as conn:
+            rows = conn.execute('SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at ASC', (run_id,)).fetchall()
+        return [ArtifactRecord(id=row['id'], runId=row['run_id'], type=row['type'], path=row['path'], mimeType=row['mime_type'], size=row['size'], sha256=row['sha256'], metadata=json.loads(row['metadata_json']), sourceEventId=row['source_event_id'], createdAt=row['created_at']) for row in rows]
+
+    def get_conversation_detail(self, conversation_id: str) -> dict[str, Any] | None:
+        conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            return None
+        runs = [run.model_dump() for run in self.list_runs() if run.conversationId == conversation_id]
+        return {
+            'conversation': conversation.model_dump(),
+            'messages': [item.model_dump() for item in self.list_messages(conversation_id)],
+            'runs': runs,
+        }
+
+    def get_run_detail(self, run_id: str) -> dict[str, Any] | None:
+        run = self.get_run(run_id)
+        if not run:
+            return None
+        return {
+            'run': run.model_dump(),
+            'live': self.get_run_live(run_id),
+            'timeline': self.list_run_timeline(run_id),
+            'attempts': [item.model_dump() for item in self.list_run_attempts(run_id)],
+            'agents': [item.model_dump() for item in self.list_agents(active_only=False) if item.runId == run_id],
+            'approvals': [item.model_dump() for item in self.list_pending_approvals() if item.runId == run_id],
+            'artifacts': [item.model_dump() for item in self.list_artifacts(run_id)],
+            'usage': [item.model_dump() for item in self.list_usage_records(entity_type='run', entity_id=run_id)],
+        }
+
+    def get_system_status(self) -> dict[str, Any]:
+        return {
+            'activeAgents': [item.model_dump() for item in self.list_agents(active_only=True)],
+            'pendingApprovals': [item.model_dump() for item in self.list_pending_approvals()],
+            'recentRuns': [item.model_dump() for item in self.list_runs()[:10]],
+        }

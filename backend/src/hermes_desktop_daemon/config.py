@@ -18,10 +18,16 @@ class Settings:
     hermes_source_root: Path
     model: str | None
     enabled_toolsets: list[str]
+    telegram_bot_token: str | None
+    telegram_chat_id: str | None
+    telegram_enabled: bool
 
     @classmethod
     def load(cls) -> 'Settings':
         db_path = Path(os.getenv('HERMES_DESKTOP_DB', str(Path.cwd() / 'data' / 'hermes_desktop.db')))
+        telegram_bot_token = os.getenv('HERMES_TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN') or None
+        telegram_chat_id = os.getenv('HERMES_TELEGRAM_CHAT_ID') or os.getenv('TELEGRAM_HOME_CHANNEL') or None
+        telegram_enabled = bool(telegram_bot_token and telegram_chat_id and os.getenv('HERMES_TELEGRAM_ENABLED', '1') != '0')
         return cls(
             db_path=db_path,
             bind_host=os.getenv('HERMES_DESKTOP_BIND_HOST', '127.0.0.1'),
@@ -30,4 +36,7 @@ class Settings:
             hermes_source_root=Path(os.getenv('HERMES_SOURCE_ROOT', '/home/vmandesk/.hermes/hermes-agent')),
             model=os.getenv('HERMES_MODEL') or None,
             enabled_toolsets=_split_csv(os.getenv('HERMES_ENABLED_TOOLSETS', '')),
+            telegram_bot_token=telegram_bot_token,
+            telegram_chat_id=telegram_chat_id,
+            telegram_enabled=telegram_enabled,
         )

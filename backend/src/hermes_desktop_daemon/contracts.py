@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 
 Visibility = Literal['internal', 'operator', 'user', 'telegram_summary']
 RunStatus = Literal['pending', 'running', 'waiting', 'done', 'error', 'cancelled']
+ApprovalStatus = Literal['pending', 'approved', 'rejected', 'expired']
+StepType = Literal['llm', 'tool', 'decision', 'approval', 'system']
+ArtifactType = Literal['file', 'screenshot', 'patch', 'report', 'log']
 
 
 class EventEnvelope(BaseModel):
@@ -60,6 +63,71 @@ class RunRecord(BaseModel):
     heartbeatAt: str | None = None
     cancellationRequestedAt: str | None = None
     staleAfter: str | None = None
+
+
+class RunAttemptRecord(BaseModel):
+    id: str
+    runId: str
+    attemptNumber: int
+    status: str
+    startedAt: str
+    finishedAt: str | None = None
+    error: str | None = None
+
+
+class AgentRecord(BaseModel):
+    id: str
+    runId: str
+    parentAgentId: str | None = None
+    lineage: str
+    name: str
+    type: str
+    status: str
+    currentTask: str | None = None
+    model: str | None = None
+    tokenUsage: int = 0
+    startedAt: str
+    finishedAt: str | None = None
+    heartbeatAt: str | None = None
+
+
+class ApprovalRecord(BaseModel):
+    id: str
+    runId: str
+    type: str
+    payload: dict[str, Any]
+    status: ApprovalStatus
+    requestedAt: str
+    expiresAt: str | None = None
+    requestedByEventId: str | None = None
+    resolvedAt: str | None = None
+    resolvedBy: str | None = None
+    resolutionReason: str | None = None
+    scope: str | None = None
+
+
+class ArtifactRecord(BaseModel):
+    id: str
+    runId: str
+    type: ArtifactType
+    path: str
+    mimeType: str | None = None
+    size: int | None = None
+    sha256: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    sourceEventId: str | None = None
+    createdAt: str
+
+
+class UsageRecord(BaseModel):
+    id: str
+    entityType: Literal['run', 'agent', 'step']
+    entityId: str
+    model: str | None = None
+    tokensIn: int = 0
+    tokensOut: int = 0
+    cost: float = 0.0
+    createdAt: str
 
 
 class SubscriptionRequest(BaseModel):

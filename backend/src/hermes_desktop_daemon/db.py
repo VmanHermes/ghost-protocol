@@ -40,6 +40,75 @@ CREATE TABLE IF NOT EXISTS runs (
   FOREIGN KEY(conversation_id) REFERENCES conversations(id)
 );
 
+CREATE TABLE IF NOT EXISTS run_attempts (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  attempt_number INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  error TEXT,
+  FOREIGN KEY(run_id) REFERENCES runs(id)
+);
+
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  parent_agent_id TEXT,
+  lineage TEXT NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  current_task TEXT,
+  model TEXT,
+  token_usage INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  heartbeat_at TEXT,
+  FOREIGN KEY(run_id) REFERENCES runs(id)
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requested_at TEXT NOT NULL,
+  expires_at TEXT,
+  requested_by_event_id TEXT,
+  resolved_at TEXT,
+  resolved_by TEXT,
+  resolution_reason TEXT,
+  scope TEXT,
+  FOREIGN KEY(run_id) REFERENCES runs(id)
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  path TEXT NOT NULL,
+  mime_type TEXT,
+  size INTEGER,
+  sha256 TEXT,
+  metadata_json TEXT NOT NULL,
+  source_event_id TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(run_id) REFERENCES runs(id)
+);
+
+CREATE TABLE IF NOT EXISTS usage_records (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  model TEXT,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id TEXT NOT NULL UNIQUE,

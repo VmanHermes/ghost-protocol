@@ -13,6 +13,7 @@ from .db import Database
 from .events import EventBus, EventSubscription
 from .runtime import HermesRuntimeAdapter
 from .store import HermesStore
+from .telegram_bridge import TelegramBridge
 
 
 def _client_ip(request: web.Request) -> str:
@@ -32,8 +33,22 @@ async def tailscale_only_middleware(request: web.Request, handler):
     return await handler(request)
 
 
-async def health(_: web.Request) -> web.Response:
-    return web.json_response({'ok': True})
+async def health(request: web.Request) -> web.Response:
+    settings: Settings = request.app['settings']
+    return web.json_response({'ok': True, 'telegramEnabled': settings.telegram_enabled})
+
+
+async def system_status(request: web.Request) -> web.Response:
+    store: HermesStore = request.app['store']
+    settings: Settings = request.app['settings']
+    status = store.get_system_status()
+    status['connection'] = {
+        'bindHost': settings.bind_host,
+        'bindPort': settings.bind_port,
+        'telegramEnabled': settings.telegram_enabled,
+        'allowedCidrs': settings.allowed_cidrs,
+    }
+    return web.json_response(status)
 
 
 async def list_conversations(request: web.Request) -> web.Response:
@@ -50,11 +65,10 @@ async def create_conversation(request: web.Request) -> web.Response:
 
 async def get_conversation(request: web.Request) -> web.Response:
     store: HermesStore = request.app['store']
-    conversation = store.get_conversation(request.match_info['conversation_id'])
-    if not conversation:
+    detail = store.get_conversation_detail(request.match_info['conversation_id'])
+    if not detail:
         raise web.HTTPNotFound(text='conversation not found')
-    messages = [item.model_dump() for item in store.list_messages(conversation.id)]
-    return web.json_response({'conversation': conversation.model_dump(), 'messages': messages})
+    return web.json_response(detail)
 
 
 async def post_message(request: web.Request) -> web.Response:
@@ -90,20 +104,29 @@ async def start_run(request: web.Request) -> web.Response:
 
 async def list_runs(request: web.Request) -> web.Response:
     store: HermesStore = request.app['store']
-    return web.json_response([item.model_dump() for item in store.list_runs() if item])
+    return web.json_response([item.model_dump() for item in store.list_runs()])
 
 
 async def get_run(request: web.Request) -> web.Response:
     store: HermesStore = request.app['store']
-    run_id = request.match_info['run_id']
-    run = store.get_run(run_id)
-    if not run:
+    detail = store.get_run_detail(request.match_info['run_id'])
+    if not detail:
         raise web.HTTPNotFound(text='run not found')
-    return web.json_response({
-        'run': run.model_dump(),
-        'live': store.get_run_live(run_id),
-        'timeline': store.list_run_timeline(run_id),
-    })
+    return web.json_response(detail)
+
+
+async def cancel_run(request: web.Request) -> web.Response:
+    runtime: HermesRuntimeAdapter = request.app['runtime']
+    run_id = request.match_info['run_id']
+    await runtime.request_cancel(run_id)
+    return web.json_response({'ok': True, 'runId': run_id})
+
+
+async def retry_run(request: web.Request) -> web.Response:
+    runtime: HermesRuntimeAdapter = request.app['runtime']
+    run_id = request.match_info['run_id']
+    new_run_id = await runtime.retry_run(run_id)
+    return web.json_response({'ok': True, 'runId': new_run_id}, status=202)
 
 
 async def list_events(request: web.Request) -> web.Response:
@@ -112,6 +135,32 @@ async def list_events(request: web.Request) -> web.Response:
     conversation_id = request.query.get('conversationId')
     run_id = request.query.get('runId')
     return web.json_response(store.list_events(after_seq=after_seq, conversation_id=conversation_id, run_id=run_id))
+
+
+async def list_agents(request: web.Request) -> web.Response:
+    store: HermesStore = request.app['store']
+    active_only = request.query.get('activeOnly', '0') == '1'
+    return web.json_response([item.model_dump() for item in store.list_agents(active_only=active_only)])
+
+
+async def list_approvals(request: web.Request) -> web.Response:
+    store: HermesStore = request.app['store']
+    return web.json_response([item.model_dump() for item in store.list_pending_approvals()])
+
+
+async def resolve_approval(request: web.Request) -> web.Response:
+    store: HermesStore = request.app['store']
+    approval_id = request.match_info['approval_id']
+    payload = await request.json()
+    record = store.resolve_approval(approval_id, payload.get('status', 'approved'), payload.get('resolvedBy', 'desktop-user'), payload.get('reason'))
+    if not record:
+        raise web.HTTPNotFound(text='approval not found')
+    return web.json_response(record.model_dump())
+
+
+async def list_artifacts(request: web.Request) -> web.Response:
+    store: HermesStore = request.app['store']
+    return web.json_response([item.model_dump() for item in store.list_artifacts(request.match_info['run_id'])])
 
 
 async def _forward_events(ws: web.WebSocketResponse, subscription: EventSubscription) -> None:
@@ -160,18 +209,6 @@ async def websocket_handler(request: web.Request) -> web.StreamResponse:
     return ws
 
 
-async def list_agents(_: web.Request) -> web.Response:
-    return web.json_response([])
-
-
-async def list_approvals(_: web.Request) -> web.Response:
-    return web.json_response([])
-
-
-async def list_artifacts(_: web.Request) -> web.Response:
-    return web.json_response([])
-
-
 async def create_app() -> web.Application:
     load_dotenv()
     settings = Settings.load()
@@ -179,6 +216,7 @@ async def create_app() -> web.Application:
     store = HermesStore(db)
     bus = EventBus(store)
     runtime = HermesRuntimeAdapter(settings, store, bus)
+    telegram_bridge = TelegramBridge(settings, bus)
     allowed_networks = [ipaddress.ip_network(item, strict=False) for item in settings.allowed_cidrs]
     app = web.Application(middlewares=[tailscale_only_middleware])
     app['settings'] = settings
@@ -186,9 +224,20 @@ async def create_app() -> web.Application:
     app['store'] = store
     app['bus'] = bus
     app['runtime'] = runtime
+    app['telegram_bridge'] = telegram_bridge
     app['allowed_networks'] = allowed_networks
+
+    async def on_startup(app_: web.Application) -> None:
+        await app_['telegram_bridge'].start()
+
+    async def on_cleanup(app_: web.Application) -> None:
+        await app_['telegram_bridge'].stop()
+
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
     app.add_routes([
         web.get('/health', health),
+        web.get('/api/system/status', system_status),
         web.get('/api/conversations', list_conversations),
         web.post('/api/conversations', create_conversation),
         web.get('/api/conversations/{conversation_id}', get_conversation),
@@ -196,9 +245,12 @@ async def create_app() -> web.Application:
         web.post('/api/runs', start_run),
         web.get('/api/runs', list_runs),
         web.get('/api/runs/{run_id}', get_run),
+        web.post('/api/runs/{run_id}/cancel', cancel_run),
+        web.post('/api/runs/{run_id}/retry', retry_run),
         web.get('/api/events', list_events),
         web.get('/api/agents', list_agents),
         web.get('/api/approvals', list_approvals),
+        web.post('/api/approvals/{approval_id}/resolve', resolve_approval),
         web.get('/api/runs/{run_id}/artifacts', list_artifacts),
         web.get('/ws', websocket_handler),
     ])
@@ -206,6 +258,7 @@ async def create_app() -> web.Application:
 
 
 def main() -> None:
+    load_dotenv()
     settings = Settings.load()
     web.run_app(create_app(), host=settings.bind_host, port=settings.bind_port)
 

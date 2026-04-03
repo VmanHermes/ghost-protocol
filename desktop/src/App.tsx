@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 type Conversation = {
@@ -31,6 +31,41 @@ type RunRecord = {
   heartbeatAt?: string | null;
 };
 
+type AgentRecord = {
+  id: string;
+  runId: string;
+  lineage: string;
+  name: string;
+  type: string;
+  status: string;
+  currentTask?: string | null;
+  model?: string | null;
+  tokenUsage: number;
+  startedAt: string;
+  finishedAt?: string | null;
+  heartbeatAt?: string | null;
+};
+
+type ApprovalRecord = {
+  id: string;
+  runId: string;
+  type: string;
+  status: string;
+  payload: Record<string, unknown>;
+  requestedAt: string;
+};
+
+type UsageRecord = {
+  id: string;
+  entityType: string;
+  entityId: string;
+  model?: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+  createdAt: string;
+};
+
 type EventEnvelope = {
   eventId: string;
   type: string;
@@ -42,10 +77,43 @@ type EventEnvelope = {
   payload: Record<string, unknown>;
 };
 
+type RunTimelineItem = {
+  id: number;
+  run_id: string;
+  seq: number;
+  event_type: string;
+  summary: string;
+  created_at: string;
+  payload: Record<string, unknown>;
+};
+
 type RunDetail = {
   run: RunRecord;
   live?: Record<string, unknown> | null;
-  timeline: Array<Record<string, unknown>>;
+  timeline: RunTimelineItem[];
+  attempts: Array<Record<string, unknown>>;
+  agents: AgentRecord[];
+  approvals: ApprovalRecord[];
+  artifacts: Array<Record<string, unknown>>;
+  usage: UsageRecord[];
+};
+
+type SystemStatus = {
+  activeAgents: AgentRecord[];
+  pendingApprovals: ApprovalRecord[];
+  recentRuns: RunRecord[];
+  connection: {
+    bindHost: string;
+    bindPort: number;
+    telegramEnabled: boolean;
+    allowedCidrs: string[];
+  };
+};
+
+type ConversationDetail = {
+  conversation: Conversation;
+  messages: Message[];
+  runs: RunRecord[];
 };
 
 const defaultBaseUrl = localStorage.getItem("hermes.desktop.baseUrl") ?? "http://127.0.0.1:8787";
@@ -90,10 +158,16 @@ function App() {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [actionError, setActionError] = useState("");
+
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
+  );
+  const activeRun = useMemo(
+    () => runs.find((item) => item.id === activeRunId) ?? null,
+    [runs, activeRunId],
   );
 
   async function refreshConversations(currentBaseUrl = baseUrl) {
@@ -112,8 +186,13 @@ function App() {
     }
   }
 
+  async function refreshSystemStatus(currentBaseUrl = baseUrl) {
+    const data = await api<SystemStatus>(currentBaseUrl, "/api/system/status");
+    setSystemStatus(data);
+  }
+
   async function loadConversation(conversationId: string, currentBaseUrl = baseUrl) {
-    const data = await api<{ conversation: Conversation; messages: Message[] }>(currentBaseUrl, `/api/conversations/${conversationId}`);
+    const data = await api<ConversationDetail>(currentBaseUrl, `/api/conversations/${conversationId}`);
     setSelectedConversationId(conversationId);
     setMessages(data.messages);
   }
@@ -126,10 +205,10 @@ function App() {
 
   async function initialize(currentBaseUrl = baseUrl) {
     try {
-      await api<{ ok: boolean }>(currentBaseUrl, "/health");
+      const health = await api<{ ok: boolean; telegramEnabled?: boolean }>(currentBaseUrl, "/health");
       setConnectionState("connected");
-      setConnectionMessage("Daemon reachable");
-      await Promise.all([refreshConversations(currentBaseUrl), refreshRuns(currentBaseUrl)]);
+      setConnectionMessage(health.telegramEnabled ? "Daemon reachable · Telegram bridge on" : "Daemon reachable");
+      await Promise.all([refreshConversations(currentBaseUrl), refreshRuns(currentBaseUrl), refreshSystemStatus(currentBaseUrl)]);
     } catch (error) {
       setConnectionState("error");
       setConnectionMessage(error instanceof Error ? error.message : "Connection failed");
@@ -137,7 +216,7 @@ function App() {
   }
 
   useEffect(() => {
-    initialize(baseUrl);
+    void initialize(baseUrl);
   }, []);
 
   useEffect(() => {
@@ -159,7 +238,6 @@ function App() {
     setConnectionState("connecting");
     setConnectionMessage("Connecting WebSocket…");
     const ws = new WebSocket(wsUrlFromHttp(baseUrl));
-    wsRef.current = ws;
     ws.onopen = () => {
       setConnectionState("connected");
       setConnectionMessage("Realtime connected");
@@ -169,7 +247,7 @@ function App() {
       const data = JSON.parse(event.data);
       if (data.op === "event") {
         const envelope = data.event as EventEnvelope;
-        setEvents((current) => [...current.slice(-199), envelope]);
+        setEvents((current) => [...current.slice(-299), envelope]);
         if (envelope.type === "message_created") {
           const payload = envelope.payload as { messageId?: string; role?: "user" | "assistant" | "system"; content?: string };
           if (
@@ -186,17 +264,13 @@ function App() {
               createdAt: envelope.ts,
               runId: envelope.runId,
             };
-            setMessages((current) => {
-              if (current.some((item) => item.id === nextMessage.id)) return current;
-              return [...current, nextMessage];
-            });
+            setMessages((current) => current.some((item) => item.id === nextMessage.id) ? current : [...current, nextMessage]);
           }
         }
-        if (envelope.runId) {
-          refreshRuns().catch(() => undefined);
-          if (activeRunId === envelope.runId) {
-            loadRun(envelope.runId).catch(() => undefined);
-          }
+        void refreshRuns();
+        void refreshSystemStatus();
+        if (envelope.runId && activeRunId === envelope.runId) {
+          void loadRun(envelope.runId);
         }
       } else if (data.op === "error") {
         setConnectionState("error");
@@ -211,10 +285,7 @@ function App() {
       setConnectionState((current) => (current === "error" ? current : "idle"));
       setConnectionMessage("Realtime disconnected");
     };
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
+    return () => ws.close();
   }, [baseUrl, selectedConversationId, activeRunId]);
 
   async function handleCreateConversation() {
@@ -229,6 +300,7 @@ function App() {
     if (!selectedConversationId || !messageInput.trim()) return;
     const content = messageInput.trim();
     setMessageInput("");
+    setActionError("");
     await api(baseUrl, `/api/conversations/${selectedConversationId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content }),
@@ -238,7 +310,7 @@ function App() {
       body: JSON.stringify({ conversationId: selectedConversationId, content }),
     });
     setActiveRunId(run.runId);
-    await refreshRuns();
+    await Promise.all([refreshRuns(), refreshSystemStatus()]);
   }
 
   async function handleApplyBaseUrl(event: FormEvent) {
@@ -250,8 +322,38 @@ function App() {
     await initialize(draftBaseUrl);
   }
 
-  const pendingApprovals = runs.filter((run) => run.status === "waiting").length;
-  const activeRun = runs.find((run) => run.id === activeRunId) ?? null;
+  async function handleRetryRun() {
+    if (!activeRunId) return;
+    try {
+      const data = await api<{ runId: string }>(baseUrl, `/api/runs/${activeRunId}/retry`, { method: "POST" });
+      setActiveRunId(data.runId);
+      await Promise.all([refreshRuns(), refreshSystemStatus()]);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Retry failed");
+    }
+  }
+
+  async function handleCancelRun() {
+    if (!activeRunId) return;
+    try {
+      await api(baseUrl, `/api/runs/${activeRunId}/cancel`, { method: "POST" });
+      await Promise.all([refreshRuns(), refreshSystemStatus(), loadRun(activeRunId)]);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Cancel failed");
+    }
+  }
+
+  async function handleResolveApproval(approvalId: string, status: "approved" | "rejected") {
+    try {
+      await api(baseUrl, `/api/approvals/${approvalId}/resolve`, {
+        method: "POST",
+        body: JSON.stringify({ status, resolvedBy: "desktop-app" }),
+      });
+      await Promise.all([refreshSystemStatus(), activeRunId ? loadRun(activeRunId) : Promise.resolve()]);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Approval resolution failed");
+    }
+  }
 
   return (
     <main className="shell">
@@ -267,6 +369,11 @@ function App() {
           </label>
           <button type="submit">Connect</button>
         </form>
+        <div className="status-block">
+          <strong>Connection</strong>
+          <span>{connectionMessage}</span>
+          <span className={`status-pill ${connectionState}`}>{connectionState}</span>
+        </div>
         <div className="conversation-list">
           {conversations.map((conversation) => (
             <button
@@ -285,10 +392,15 @@ function App() {
         <div className="panel-header">
           <div>
             <h2>{selectedConversation?.title || "Chat"}</h2>
-            <p className="muted">Primary desktop interface over the shared daemon API</p>
+            <p className="muted">Primary desktop interface over the shared daemon API and event stream</p>
           </div>
-          <div className={`status-pill ${connectionState}`}>{connectionMessage}</div>
+          <div className="toolbar">
+            <button onClick={() => void handleRetryRun()} disabled={!activeRunId}>Retry run</button>
+            <button onClick={() => void handleCancelRun()} disabled={!activeRunId}>Cancel run</button>
+          </div>
         </div>
+
+        {actionError ? <div className="error-banner">{actionError}</div> : null}
 
         <div className="messages">
           {messages.map((message) => (
@@ -317,33 +429,19 @@ function App() {
 
       <aside className="inspector panel">
         <div className="panel-header">
-          <h2>Run live</h2>
+          <div>
+            <h2>Run live</h2>
+            <p className="muted">Desktop-first observability</p>
+          </div>
         </div>
+
         <div className="stats-grid">
-          <div>
-            <span>Status</span>
-            <strong>{activeRun?.status ?? "—"}</strong>
-          </div>
-          <div>
-            <span>Current step</span>
-            <strong>{activeRun?.currentStep ?? "—"}</strong>
-          </div>
-          <div>
-            <span>Tokens</span>
-            <strong>{activeRun?.tokenUsage ?? 0}</strong>
-          </div>
-          <div>
-            <span>Cost</span>
-            <strong>{activeRun?.costEstimate?.toFixed?.(4) ?? "0.0000"}</strong>
-          </div>
-          <div>
-            <span>Pending approvals</span>
-            <strong>{pendingApprovals}</strong>
-          </div>
-          <div>
-            <span>Model</span>
-            <strong>{activeRun?.model ?? "default"}</strong>
-          </div>
+          <div><span>Status</span><strong>{activeRun?.status ?? "—"}</strong></div>
+          <div><span>Current step</span><strong>{activeRun?.currentStep ?? "—"}</strong></div>
+          <div><span>Tokens</span><strong>{activeRun?.tokenUsage ?? 0}</strong></div>
+          <div><span>Cost</span><strong>{activeRun?.costEstimate?.toFixed?.(4) ?? "0.0000"}</strong></div>
+          <div><span>Approvals</span><strong>{systemStatus?.pendingApprovals.length ?? 0}</strong></div>
+          <div><span>Telegram bridge</span><strong>{systemStatus?.connection.telegramEnabled ? "enabled" : "off"}</strong></div>
         </div>
 
         <section className="stack-md">
@@ -359,12 +457,59 @@ function App() {
         </section>
 
         <section className="stack-md">
+          <h3>Agents</h3>
+          <div className="timeline compact">
+            {(runDetail?.agents ?? systemStatus?.activeAgents ?? []).map((agent) => (
+              <article key={agent.id} className="timeline-item">
+                <strong>{agent.name} · {agent.status}</strong>
+                <span>{agent.currentTask || agent.type}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="stack-md">
+          <h3>Approvals</h3>
+          <div className="timeline compact">
+            {(systemStatus?.pendingApprovals ?? []).length === 0 ? <div className="empty-state">No pending approvals</div> : null}
+            {(systemStatus?.pendingApprovals ?? []).map((approval) => (
+              <article key={approval.id} className="timeline-item approval-item">
+                <strong>{approval.type}</strong>
+                <span>{JSON.stringify(approval.payload)}</span>
+                <div className="toolbar">
+                  <button onClick={() => void handleResolveApproval(approval.id, "approved")}>Approve</button>
+                  <button onClick={() => void handleResolveApproval(approval.id, "rejected")}>Reject</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="stack-md">
+          <h3>Attempts & usage</h3>
+          <div className="timeline compact">
+            {(runDetail?.attempts ?? []).map((attempt) => (
+              <article key={String(attempt.id)} className="timeline-item">
+                <strong>Attempt {String(attempt.attemptNumber ?? "?")}</strong>
+                <span>{String(attempt.status ?? "unknown")}</span>
+              </article>
+            ))}
+            {(runDetail?.usage ?? []).map((usage) => (
+              <article key={usage.id} className="timeline-item">
+                <strong>{usage.model || "model"}</strong>
+                <span>{usage.tokensIn + usage.tokensOut} tokens · ${usage.cost.toFixed(4)}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="stack-md">
           <h3>Timeline</h3>
           <div className="timeline">
             {(runDetail?.timeline ?? []).map((item) => (
               <article key={`${item.seq}`} className="timeline-item">
-                <strong>{String(item.event_type)}</strong>
-                <span>{String(item.summary)}</span>
+                <strong>{item.event_type}</strong>
+                <span>{item.summary}</span>
               </article>
             ))}
           </div>

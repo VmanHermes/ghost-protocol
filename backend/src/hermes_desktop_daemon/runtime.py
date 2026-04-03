@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -157,7 +158,42 @@ class HermesRuntimeAdapter:
                 summary=f'Completed tool step: {tool_name}', payload={'toolName': tool_name}
             ))
 
+        async def _publish_approval_request(approval_data: dict[str, Any]) -> None:
+            approval = self.store.create_approval(ctx.run_id, 'command', approval_data)
+            await self._emit(
+                type='approval_requested',
+                conversationId=ctx.conversation_id,
+                runId=ctx.run_id,
+                approvalId=approval.id,
+                visibility='user',
+                summary='Awaiting approval…',
+                payload={
+                    'approvalId': approval.id,
+                    'type': approval.type,
+                    'payload': approval.payload,
+                    'status': approval.status,
+                },
+            )
+            await self._emit(
+                type='run_status_changed',
+                conversationId=ctx.conversation_id,
+                runId=ctx.run_id,
+                approvalId=approval.id,
+                visibility='user',
+                summary='Awaiting approval…',
+                payload={'status': 'waiting', 'waitingReason': 'approval_requested', 'approvalId': approval.id},
+            )
+
+        def approval_notify_callback(approval_data: dict[str, Any]) -> None:
+            asyncio.run_coroutine_threadsafe(_publish_approval_request(approval_data), loop)
+
         def run_sync() -> dict[str, Any]:
+            from tools.approval import register_gateway_notify, unregister_gateway_notify
+
+            os.environ['HERMES_GATEWAY_SESSION'] = '1'
+            os.environ['HERMES_EXEC_ASK'] = '1'
+            os.environ['HERMES_SESSION_KEY'] = ctx.run_id
+
             agent = self._agent_cls(
                 model=self.settings.model or '',
                 quiet_mode=True,
@@ -170,7 +206,11 @@ class HermesRuntimeAdapter:
                 tool_start_callback=tool_start_callback,
                 tool_complete_callback=tool_complete_callback,
             )
-            result = agent.run_conversation(ctx.user_message, conversation_history=history, task_id=ctx.run_id)
+            register_gateway_notify(ctx.run_id, approval_notify_callback)
+            try:
+                result = agent.run_conversation(ctx.user_message, conversation_history=history, task_id=ctx.run_id)
+            finally:
+                unregister_gateway_notify(ctx.run_id)
             result['_agent_model'] = getattr(agent, 'model', self.settings.model)
             result['_input_tokens'] = int(getattr(agent, 'session_prompt_tokens', 0) or 0)
             result['_output_tokens'] = int(getattr(agent, 'session_completion_tokens', 0) or 0)

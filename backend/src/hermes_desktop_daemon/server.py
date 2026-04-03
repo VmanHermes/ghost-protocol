@@ -150,12 +150,31 @@ async def list_approvals(request: web.Request) -> web.Response:
 
 async def resolve_approval(request: web.Request) -> web.Response:
     store: HermesStore = request.app['store']
+    bus: EventBus = request.app['bus']
     approval_id = request.match_info['approval_id']
     payload = await request.json()
-    record = store.resolve_approval(approval_id, payload.get('status', 'approved'), payload.get('resolvedBy', 'desktop-user'), payload.get('reason'))
+    status = payload.get('status', 'approved')
+    resolved_by = payload.get('resolvedBy', 'desktop-user')
+    reason = payload.get('reason')
+    record = store.resolve_approval(approval_id, status, resolved_by, reason)
     if not record:
         raise web.HTTPNotFound(text='approval not found')
-    return web.json_response(record.model_dump())
+
+    try:
+        from tools.approval import resolve_gateway_approval
+        resolve_gateway_approval(record.runId, 'once' if status == 'approved' else 'deny', resolve_all=False)
+    except Exception:
+        pass
+
+    event = await bus.publish(EventEnvelope(
+        type='approval_resolved',
+        runId=record.runId,
+        approvalId=record.id,
+        visibility='user',
+        summary='Approval resolved',
+        payload={'approvalId': record.id, 'status': record.status, 'resolvedBy': resolved_by, 'reason': reason},
+    ))
+    return web.json_response({'approval': record.model_dump(), 'event': event.model_dump()})
 
 
 async def list_artifacts(request: web.Request) -> web.Response:
@@ -216,7 +235,7 @@ async def create_app() -> web.Application:
     store = HermesStore(db)
     bus = EventBus(store)
     runtime = HermesRuntimeAdapter(settings, store, bus)
-    telegram_bridge = TelegramBridge(settings, bus)
+    telegram_bridge = TelegramBridge(settings, bus, store, runtime)
     allowed_networks = [ipaddress.ip_network(item, strict=False) for item in settings.allowed_cidrs]
     app = web.Application(middlewares=[tailscale_only_middleware])
     app['settings'] = settings

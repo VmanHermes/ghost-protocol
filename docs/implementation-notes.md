@@ -30,6 +30,16 @@
   - attempts and usage
   - retry/cancel actions
 
+## Phase 3-in-progress summary
+- wired Hermes dangerous-command approval callback into the daemon runtime using `tools.approval.register_gateway_notify`
+- daemon now emits `approval_requested` when the runtime blocks for approval
+- desktop/HTTP approval resolution now unblocks the underlying Hermes approval queue via `resolve_gateway_approval`
+- Telegram bridge now supports:
+  - outbound concise progress/final updates from the shared event stream
+  - inbound polling from the configured Telegram chat
+  - starting runs from Telegram messages through the daemon pipeline
+  - `/approve` and `/deny` handling for pending approvals
+
 ## Validation completed
 - backend modules compile with `python3 -m py_compile backend/src/hermes_desktop_daemon/*.py`
 - frontend build succeeds with `npm run build`
@@ -37,11 +47,12 @@
 - conversation create/message append/run start succeed
 - run detail includes timeline, agent, attempts, and usage data
 - retry endpoint works
+- approval resolution endpoint works end-to-end against daemon state
 - Telegram bridge is configured from `.env` and enabled at runtime
 
-## Still deferred after phase 2
-- inbound Telegram -> daemon conversation bridging
-- approval requests emitted directly from Hermes approvals into the daemon approvals table
+## Still deferred
+- richer approval payloads directly from Hermes command safety internals beyond the current command-oriented bridge
 - subagent tree reconstruction from delegated runs
 - artifact persistence linked to originating events
 - stronger Tailscale-native service identity / ACL integration beyond CIDR allowlisting
+- production-grade Telegram inbound dedupe/history persistence beyond the current lightweight polling bridge

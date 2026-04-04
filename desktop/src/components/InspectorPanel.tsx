@@ -8,6 +8,7 @@ import type {
 } from "../types";
 
 type Props = {
+  activeHostName: string | null;
   activeRun: RunRecord | null;
   runs: RunRecord[];
   runDetail: RunDetail | null;
@@ -35,6 +36,7 @@ function timeAgo(ts: string): string {
 }
 
 export function InspectorPanel({
+  activeHostName,
   activeRun: _activeRun,
   runs,
   runDetail,
@@ -95,7 +97,7 @@ export function InspectorPanel({
   return (
     <aside className="observability">
       <div className="observability-header">
-        <h2>Observability</h2>
+        <h2>{activeHostName ? `${activeHostName} — Observability` : "Local — Observability"}</h2>
         <p className="muted">Real-time metrics & alerts</p>
       </div>
 

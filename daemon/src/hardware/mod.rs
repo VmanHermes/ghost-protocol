@@ -16,6 +16,7 @@ pub struct ToolsInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MachineInfo {
     pub hostname: String,
     pub tailscale_ip: Option<String>,
@@ -27,6 +28,7 @@ pub struct MachineInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MachineStatus {
     pub cpu_percent: Option<f64>,
     pub ram_used_gb: f64,

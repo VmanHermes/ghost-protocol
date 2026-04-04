@@ -257,3 +257,23 @@ pub async fn terminate_session(
             )
         })
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/system/hardware
+// ---------------------------------------------------------------------------
+
+pub async fn system_hardware() -> Json<crate::hardware::MachineInfo> {
+    Json(crate::hardware::collect_machine_info())
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/system/hardware/status
+// ---------------------------------------------------------------------------
+
+pub async fn system_hardware_status(
+    State(state): State<AppState>,
+) -> Json<crate::hardware::MachineStatus> {
+    let sessions = state.store.list_terminal_sessions().unwrap_or_default();
+    let active = sessions.iter().filter(|s| s.status == "running").count();
+    Json(crate::hardware::collect_machine_status(active))
+}

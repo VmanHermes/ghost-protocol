@@ -46,6 +46,8 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(http::health))
         .route("/api/system/status", get(http::system_status))
         .route("/api/system/logs", get(http::system_logs))
+        .route("/api/system/hardware", get(http::system_hardware))
+        .route("/api/system/hardware/status", get(http::system_hardware_status))
         .route(
             "/api/terminal/sessions",
             get(http::list_sessions).post(http::create_session),

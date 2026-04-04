@@ -136,3 +136,34 @@ async fn test_health_and_system_status() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn test_hardware_endpoints() {
+    with_daemon(|| async {
+        let client = reqwest::Client::new();
+
+        // GET /api/system/hardware
+        let resp = client
+            .get(format!("{BASE}/api/system/hardware"))
+            .send()
+            .await
+            .unwrap();
+        assert!(resp.status().is_success());
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["hostname"].is_string());
+        assert!(body["cpu"]["cores"].is_number());
+        assert!(body["ramGb"].is_number());
+
+        // GET /api/system/hardware/status
+        let resp = client
+            .get(format!("{BASE}/api/system/hardware/status"))
+            .send()
+            .await
+            .unwrap();
+        assert!(resp.status().is_success());
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["ramTotalGb"].is_number());
+        assert!(body["ramUsedGb"].is_number());
+    })
+    .await;
+}

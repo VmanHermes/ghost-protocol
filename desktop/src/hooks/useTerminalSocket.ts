@@ -17,6 +17,7 @@ export type UseTerminalSocketOptions = {
   baseUrl: string;
   sessionId: string | null;
   terminalRef: React.RefObject<Terminal | null>;
+  isActive: boolean;
   initialCache?: SessionChunkCache | null;
   onSessionStatusChange?: (session: TerminalSession) => void;
   onError?: (message: string) => void;
@@ -36,6 +37,7 @@ export function useTerminalSocket({
   baseUrl,
   sessionId,
   terminalRef,
+  isActive,
   initialCache,
   onSessionStatusChange,
   onError,
@@ -45,6 +47,7 @@ export function useTerminalSocket({
   const chunkBufferRef = useRef<string[]>([]);
   const chunkCacheRef = useRef<string[]>([]);
   const sessionIdRef = useRef(sessionId);
+  const isActiveRef = useRef(isActive);
   const initialCacheRef = useRef(initialCache);
   const onStatusChangeRef = useRef(onSessionStatusChange);
   const onErrorRef = useRef(onError);
@@ -54,12 +57,14 @@ export function useTerminalSocket({
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
   useEffect(() => { initialCacheRef.current = initialCache; }, [initialCache]);
   useEffect(() => { onStatusChangeRef.current = onSessionStatusChange; }, [onSessionStatusChange]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
   // Flush buffered chunks when terminal becomes available
   useEffect(() => {
+    if (!isActive) return;
     const terminal = terminalRef.current;
     if (!terminal || chunkBufferRef.current.length === 0) return;
     for (const data of chunkBufferRef.current) {
@@ -90,7 +95,7 @@ export function useTerminalSocket({
       // Reset terminal only on fresh connect (not reconnect)
       if (!isReconnect) {
         const terminal = terminalRef.current;
-        if (terminal) terminal.reset();
+        if (isActiveRef.current && terminal) terminal.reset();
 
         // Restore from cache if available — write cached content locally
         // and subscribe only for new chunks from the server
@@ -98,7 +103,7 @@ export function useTerminalSocket({
         if (cache && cache.chunks.length > 0) {
           chunkCacheRef.current = [...cache.chunks];
           lastChunkIdRef.current = cache.lastChunkId;
-          if (terminal) {
+          if (isActiveRef.current && terminal) {
             for (const data of cache.chunks) {
               terminal.write(data);
             }
@@ -149,11 +154,13 @@ export function useTerminalSocket({
           if (chunk.id <= lastChunkIdRef.current) return;
           lastChunkIdRef.current = chunk.id;
           chunkCacheRef.current.push(chunk.chunk);
-          const term = terminalRef.current;
-          if (term) {
-            term.write(chunk.chunk);
-          } else {
-            chunkBufferRef.current.push(chunk.chunk);
+          if (isActiveRef.current) {
+            const term = terminalRef.current;
+            if (term) {
+              term.write(chunk.chunk);
+            } else {
+              chunkBufferRef.current.push(chunk.chunk);
+            }
           }
         } else if (data.op === "terminal_status") {
           const session = data.session as TerminalSession;

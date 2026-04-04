@@ -46,7 +46,7 @@ class Settings:
             bind_host=_first_env('GHOST_PROTOCOL_BIND_HOST', 'HERMES_DESKTOP_BIND_HOST', default='127.0.0.1'),
             bind_port=int(_first_env('GHOST_PROTOCOL_BIND_PORT', 'HERMES_DESKTOP_BIND_PORT', default='8787')),
             allowed_cidrs=_split_csv(_first_env('GHOST_PROTOCOL_ALLOWED_CIDRS', 'HERMES_DESKTOP_ALLOWED_CIDRS', default='100.64.0.0/10,fd7a:115c:a1e0::/48,127.0.0.1/32') or ''),
-            hermes_source_root=Path(os.getenv('HERMES_SOURCE_ROOT', '/home/vmandesk/.hermes/hermes-agent')),
+            hermes_source_root=Path(os.getenv('HERMES_SOURCE_ROOT', os.path.expanduser('~/.hermes/hermes-agent'))),
             model=os.getenv('HERMES_MODEL') or None,
             enabled_toolsets=_split_csv(os.getenv('HERMES_ENABLED_TOOLSETS', '')),
             telegram_bot_token=telegram_bot_token,

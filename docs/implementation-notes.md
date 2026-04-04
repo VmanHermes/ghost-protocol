@@ -1,7 +1,7 @@
 # Implementation notes
 
 ## Phase 1 summary
-- inspected `/home/vmandesk/.hermes/hermes-agent/run_agent.py`, `gateway/run.py`, `gateway/platforms/telegram.py`, and `gateway/platforms/api_server.py`
+- inspected `~/.hermes/hermes-agent/run_agent.py`, `gateway/run.py`, `gateway/platforms/telegram.py`, and `gateway/platforms/api_server.py`
 - confirmed the existing Hermes runtime already exposes callbacks for lifecycle, status, tool start/complete, and streaming
 - built a sidecar daemon rather than rewriting Hermes orchestration in place
 - added a persistent event log, HTTP API, WebSocket replay/subscribe path, and an initial Tauri Ghost Protocol shell

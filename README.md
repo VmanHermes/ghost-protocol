@@ -20,7 +20,7 @@ Workspace layout:
 
 Current architecture decision:
 - keep Hermes runtime headless and outside the Ghost Protocol shell
-- use the existing `AIAgent` runtime from `/home/vmandesk/.hermes/hermes-agent`
+- use the existing `AIAgent` runtime from `~/.hermes/hermes-agent`
 - add a thin adapter layer that emits persistent events and exposes explicit APIs
 - use WebSocket for primary realtime delivery and HTTP for request-response APIs
 
@@ -29,7 +29,7 @@ Current architecture decision:
 - Python 3.11+
 - Node.js + npm
 - Rust + Cargo
-- a working Hermes runtime at `/home/vmandesk/.hermes/hermes-agent`
+- a working Hermes runtime at `~/.hermes/hermes-agent`
 
 ## Install
 ```bash

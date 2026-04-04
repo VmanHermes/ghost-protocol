@@ -10,7 +10,7 @@ Build a Tauri 2 Ghost Protocol application that becomes the primary interface fo
 4. Scaffold the Ghost Protocol app around that transport.
 
 ## Existing architecture summary
-- The current Hermes runtime lives at `/home/vmandesk/.hermes/hermes-agent`.
+- The current Hermes runtime lives at `~/.hermes/hermes-agent`.
 - `run_agent.py` contains the `AIAgent` orchestration loop.
 - `gateway/run.py` adapts messaging platforms to the runtime and already bridges callbacks like `status_callback`, `step_callback`, `tool_start_callback`, and `tool_complete_callback`.
 - `gateway/platforms/telegram.py` is the current Telegram adapter.

@@ -4,11 +4,11 @@
 Recommended local run using the existing Hermes environment:
 
 ```bash
-cd /home/vmandesk/Work/projects/ghost-protocol
+cd /path/to/ghost-protocol
 set -a
 source .env
 set +a
-PYTHONPATH=backend/src /home/vmandesk/.hermes/hermes-agent/venv/bin/python -m ghost_protocol_daemon.server
+PYTHONPATH=backend/src ~/.hermes/hermes-agent/venv/bin/python -m ghost_protocol_daemon.server
 ```
 
 ## Backend service
@@ -20,7 +20,7 @@ systemctl --user status ghost-protocol-backend.service --no-pager
 
 ## Desktop launcher
 ```bash
-cd /home/vmandesk/Work/projects/ghost-protocol
+cd /path/to/ghost-protocol
 ./scripts/open-app.sh
 ```
 
@@ -28,7 +28,7 @@ A desktop entry named `Ghost Protocol` is also installed in `~/.local/share/appl
 
 ## Desktop app
 ```bash
-cd /home/vmandesk/Work/projects/ghost-protocol/desktop
+cd /path/to/ghost-protocol/desktop
 npm install
 npm run tauri dev
 ```

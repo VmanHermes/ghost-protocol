@@ -24,3 +24,40 @@ export async function api<T>(baseUrl: string, path: string, init?: RequestInit):
   }
   return res.json() as Promise<T>;
 }
+
+export type ApiHost = {
+  id: string;
+  name: string;
+  tailscaleIp: string;
+  url: string;
+  status: string;
+  lastSeen: string | null;
+  capabilities: {
+    gpu: string | null;
+    ramGb: number | null;
+    hermes: boolean;
+    ollama: boolean;
+  } | null;
+};
+
+export async function listHosts(daemonUrl: string): Promise<ApiHost[]> {
+  return api<ApiHost[]>(daemonUrl, "/api/hosts");
+}
+
+export async function addHostApi(
+  daemonUrl: string,
+  name: string,
+  tailscaleIp: string,
+): Promise<ApiHost> {
+  return api<ApiHost>(daemonUrl, "/api/hosts", {
+    method: "POST",
+    body: JSON.stringify({ name, tailscaleIp }),
+  });
+}
+
+export async function removeHostApi(
+  daemonUrl: string,
+  hostId: string,
+): Promise<void> {
+  await fetch(`${daemonUrl}/api/hosts/${hostId}`, { method: "DELETE" });
+}

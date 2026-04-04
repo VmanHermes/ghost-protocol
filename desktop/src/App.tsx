@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { api } from "./api";
+import { api, listHosts, addHostApi, removeHostApi, type ApiHost } from "./api";
 import { loadHosts, addHost as persistAddHost, removeHost as persistRemoveHost } from "./hosts";
 import { appLog } from "./log";
 import type {
@@ -23,9 +23,28 @@ import "./App.css";
 // but no panel renders for it until the Rust daemon adds chat support.
 type MainView = "chat" | "terminal" | "logs" | "settings";
 
+const LOCAL_DAEMON = "http://127.0.0.1:8787";
+
 function App() {
   // Multi-host state
-  const [hosts, setHosts] = useState<SavedHost[]>(() => loadHosts());
+  const [hosts, setHosts] = useState<SavedHost[]>([]);
+
+  const refreshHosts = useCallback(async () => {
+    try {
+      const apiHosts = await listHosts(LOCAL_DAEMON);
+      setHosts(
+        apiHosts.map((h: ApiHost) => ({ id: h.id, name: h.name, url: h.url })),
+      );
+    } catch {
+      // Fall back to localStorage if daemon isn't running
+      setHosts(loadHosts());
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHosts();
+  }, [refreshHosts]);
+
   const [connections, setConnections] = useState<Map<string, HostConnection>>(new Map());
 
   // Shared state (unchanged)
@@ -272,27 +291,18 @@ function App() {
     }
   }, [activeTerminalSessionId, localSessions]);
 
-  const handleAddHost = useCallback((name: string, url: string) => {
-    const updated = persistAddHost(hosts, name, url);
-    setHosts(updated);
-    const newHost = updated[updated.length - 1];
-    setConnections((prev) => {
-      const next = new Map(prev);
-      next.set(newHost.id, {
-        host: newHost,
-        state: "connecting",
-        message: "Connecting...",
-        sessions: null,
-        runs: null,
-        conversations: null,
-        systemStatus: null,
-      });
-      return next;
-    });
-    void checkHostHealth(newHost);
-  }, [hosts, checkHostHealth]);
+  const handleAddHost = useCallback(async (name: string, url: string) => {
+    try {
+      const ip = new URL(url).hostname;
+      await addHostApi(LOCAL_DAEMON, name, ip);
+      await refreshHosts();
+    } catch {
+      // Fall back to localStorage
+      setHosts((prev) => persistAddHost(prev, name, url));
+    }
+  }, [refreshHosts]);
 
-  const handleRemoveHost = useCallback((hostId: string) => {
+  const handleRemoveHost = useCallback(async (hostId: string) => {
     const host = hosts.find((h) => h.id === hostId);
     const conn = connections.get(hostId);
     // Terminate active sessions on this host
@@ -302,8 +312,12 @@ function App() {
         void api(host.url, `/api/terminal/sessions/${session.id}/terminate`, { method: "POST" }).catch(() => {});
       }
     }
-    const updated = persistRemoveHost(hosts, hostId);
-    setHosts(updated);
+    try {
+      await removeHostApi(LOCAL_DAEMON, hostId);
+      await refreshHosts();
+    } catch {
+      setHosts((prev) => persistRemoveHost(prev, hostId));
+    }
     setConnections((prev) => {
       const next = new Map(prev);
       next.delete(hostId);
@@ -312,12 +326,12 @@ function App() {
     if (conn?.sessions?.some((s) => s.id === activeTerminalSessionId)) {
       setActiveTerminalSessionId(null);
     }
-  }, [hosts, connections, activeTerminalSessionId]);
+  }, [hosts, connections, activeTerminalSessionId, refreshHosts]);
 
   const handleHostDetected = useCallback((name: string, url: string) => {
     const alreadyExists = hosts.some((h) => h.url === url);
     if (!alreadyExists) {
-      handleAddHost(name, url);
+      void handleAddHost(name, url);
     }
     setShowSetupChecklist(false);
   }, [hosts, handleAddHost]);
@@ -373,7 +387,7 @@ function App() {
         setHostingAddress(`${tailscaleIp}:8787`);
         const alreadyExists = hosts.some((h) => h.url === "http://127.0.0.1:8787");
         if (!alreadyExists) {
-          handleAddHost("This Computer", "http://127.0.0.1:8787");
+          void handleAddHost("This Computer", "http://127.0.0.1:8787");
         }
         return;
       } catch {

@@ -1,6 +1,7 @@
 // daemon/src/main.rs
 mod config;
 mod store;
+mod terminal;
 
 use clap::Parser;
 use config::{Cli, Settings};

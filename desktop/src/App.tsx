@@ -338,7 +338,7 @@ function App() {
     }
   }, [hosts, connections, updateConnection]);
 
-  const handleRemoteSessionStatusChange = useCallback((session: TerminalSession) => {
+  const handleRemoteSessionStatusChange = useCallback((_session: TerminalSession) => {
     if (!activeHostId || !activeHostUrl) return;
     const hostId = activeHostId;
     const url = activeHostUrl;

@@ -429,7 +429,7 @@ class HermesStore:
 
     def list_terminal_sessions(self) -> list[TerminalSessionRecord]:
         with self.db.connection() as conn:
-            rows = conn.execute('SELECT * FROM terminal_sessions ORDER BY created_at DESC').fetchall()
+            rows = conn.execute('SELECT * FROM terminal_sessions ORDER BY created_at DESC, id ASC').fetchall()
         return [self._terminal_session_from_row(row) for row in rows]
 
     def _terminal_session_from_row(self, row) -> TerminalSessionRecord:

@@ -376,14 +376,20 @@ function App() {
     }
   }, [hosts]);
 
-  const handleRemoteSessionStatusChange = useCallback((_session: TerminalSession) => {
-    if (!activeHostId || !activeHostUrl) return;
+  const handleRemoteSessionStatusChange = useCallback((session: TerminalSession) => {
+    if (!activeHostId) return;
     const hostId = activeHostId;
-    const url = activeHostUrl;
-    void api<TerminalSession[]>(url, "/api/terminal/sessions").then((sessions) => {
-      updateConnection(hostId, { sessions });
+    setConnections((prev) => {
+      const conn = prev.get(hostId);
+      if (!conn?.sessions) return prev;
+      const updatedSessions = conn.sessions.map((s) =>
+        s.id === session.id ? session : s,
+      );
+      const next = new Map(prev);
+      next.set(hostId, { ...conn, sessions: updatedSessions });
+      return next;
     });
-  }, [activeHostId, activeHostUrl, updateConnection]);
+  }, [activeHostId]);
 
   const handleKillRemoteSession = useCallback(async (sessionId: string) => {
     if (!activeHostId || !activeHostUrl) return;

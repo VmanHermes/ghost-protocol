@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { useTerminalSocket } from "../hooks/useTerminalSocket";
+import { useTerminalSocket, type SessionChunkCache } from "../hooks/useTerminalSocket";
 import { useLocalTerminal } from "../hooks/useLocalTerminal";
 import type { HostConnection, LocalTerminalSession, SavedHost, TerminalSession } from "../types";
 import { SetupChecklist } from "./SetupChecklist";
@@ -76,6 +76,8 @@ export function TerminalWorkspace({
   const [error, setError] = useState("");
   const [showAddMenu, setShowAddMenu] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const sessionCacheRef = useRef<Map<string, SessionChunkCache>>(new Map());
+  const prevSessionIdRef = useRef<string | null>(null);
 
   const activeRemoteSessions = useMemo(
     () => allRemoteSessions.filter((e) => ACTIVE_STATUSES.has(e.session.status)),
@@ -106,19 +108,37 @@ export function TerminalWorkspace({
     : null;
   const activeBaseUrl = activeRemoteHost?.url ?? "http://localhost:8787";
 
+  // Save outgoing session's chunk cache when activeSessionId changes
+  const remoteSessionId = isLocalSession ? null : activeSessionId;
+  const getChunkCacheRef = useRef<(() => SessionChunkCache) | null>(null);
+  useEffect(() => {
+    const prevId = prevSessionIdRef.current;
+    prevSessionIdRef.current = remoteSessionId;
+    if (prevId && prevId !== remoteSessionId && getChunkCacheRef.current) {
+      sessionCacheRef.current.set(prevId, getChunkCacheRef.current());
+    }
+  }, [remoteSessionId]);
+
+  const initialCache = remoteSessionId
+    ? sessionCacheRef.current.get(remoteSessionId) ?? null
+    : null;
+
   // Use both hooks — only the relevant one gets a sessionId
   const {
     sendInput: remoteSendInput,
     resize: remoteResize,
     terminate,
     sessionMeta: remoteSessionMeta,
+    getChunkCache,
   } = useTerminalSocket({
     baseUrl: activeBaseUrl,
-    sessionId: isLocalSession ? null : activeSessionId,
+    sessionId: remoteSessionId,
     terminalRef,
+    initialCache,
     onSessionStatusChange: onRemoteSessionStatusChange,
     onError: setError,
   });
+  useEffect(() => { getChunkCacheRef.current = getChunkCache; }, [getChunkCache]);
 
   const {
     sendInput: localSendInput,
@@ -168,6 +188,7 @@ export function TerminalWorkspace({
       convertEol: false,
       fontFamily: 'SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
       fontSize: 14,
+      letterSpacing: 0,
       theme: {
         background: "#1a1f36",
         foreground: "#e2e8f0",
@@ -312,9 +333,9 @@ export function TerminalWorkspace({
                         </div>
                         {isConnected && (
                           <>
-                            <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "rescue_shell"); setShowAddMenu(false); }}>rescue shell</button>
-                            <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "agent"); setShowAddMenu(false); }}>agent</button>
-                            <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "project"); setShowAddMenu(false); }}>project</button>
+                            <button className="terminal-add-menu-item terminal-add-menu-sub" title="Raw shell for manual debugging and recovery" onClick={() => { onCreateRemoteSession(host.id, "rescue_shell"); setShowAddMenu(false); }}>rescue shell</button>
+                            <button className="terminal-add-menu-item terminal-add-menu-sub" title="Hermes AI agent with tool access and approval flow" onClick={() => { onCreateRemoteSession(host.id, "agent"); setShowAddMenu(false); }}>agent</button>
+                            <button className="terminal-add-menu-item terminal-add-menu-sub" title="Shell scoped to the project working directory" onClick={() => { onCreateRemoteSession(host.id, "project"); setShowAddMenu(false); }}>project</button>
                           </>
                         )}
                       </div>

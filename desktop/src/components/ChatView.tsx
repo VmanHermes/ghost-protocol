@@ -1,4 +1,4 @@
-import { FormEvent } from "react";
+import { FormEvent, KeyboardEvent } from "react";
 import { fmt } from "../api";
 import type { Message } from "../types";
 
@@ -47,7 +47,15 @@ export function ChatView({
         <textarea
           value={messageInput}
           onChange={(event) => onChangeMessageInput(event.currentTarget.value)}
-          placeholder="Send a message to Hermes…"
+          onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              if (selectedConversationId && messageInput.trim()) {
+                onSendMessage(event as unknown as FormEvent);
+              }
+            }
+          }}
+          placeholder="Send a message to Hermes… (Shift+Enter for newline)"
           rows={4}
         />
         <button type="submit" disabled={!selectedConversationId || !messageInput.trim()}>

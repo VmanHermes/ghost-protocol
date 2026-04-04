@@ -8,10 +8,16 @@ const SRC = "terminal-ws";
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 5000;
 
+export type SessionChunkCache = {
+  chunks: string[];
+  lastChunkId: number;
+};
+
 export type UseTerminalSocketOptions = {
   baseUrl: string;
   sessionId: string | null;
   terminalRef: React.RefObject<Terminal | null>;
+  initialCache?: SessionChunkCache | null;
   onSessionStatusChange?: (session: TerminalSession) => void;
   onError?: (message: string) => void;
 };
@@ -23,19 +29,23 @@ export type UseTerminalSocketReturn = {
   terminate: () => void;
   sessionMeta: TerminalSession | null;
   isConnected: boolean;
+  getChunkCache: () => SessionChunkCache;
 };
 
 export function useTerminalSocket({
   baseUrl,
   sessionId,
   terminalRef,
+  initialCache,
   onSessionStatusChange,
   onError,
 }: UseTerminalSocketOptions): UseTerminalSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const lastChunkIdRef = useRef<number>(0);
   const chunkBufferRef = useRef<string[]>([]);
+  const chunkCacheRef = useRef<string[]>([]);
   const sessionIdRef = useRef(sessionId);
+  const initialCacheRef = useRef(initialCache);
   const onStatusChangeRef = useRef(onSessionStatusChange);
   const onErrorRef = useRef(onError);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -44,6 +54,7 @@ export function useTerminalSocket({
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { initialCacheRef.current = initialCache; }, [initialCache]);
   useEffect(() => { onStatusChangeRef.current = onSessionStatusChange; }, [onSessionStatusChange]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
@@ -80,7 +91,22 @@ export function useTerminalSocket({
       if (!isReconnect) {
         const terminal = terminalRef.current;
         if (terminal) terminal.reset();
-        lastChunkIdRef.current = 0;
+
+        // Restore from cache if available — write cached content locally
+        // and subscribe only for new chunks from the server
+        const cache = initialCacheRef.current;
+        if (cache && cache.chunks.length > 0) {
+          chunkCacheRef.current = [...cache.chunks];
+          lastChunkIdRef.current = cache.lastChunkId;
+          if (terminal) {
+            for (const data of cache.chunks) {
+              terminal.write(data);
+            }
+          }
+        } else {
+          chunkCacheRef.current = [];
+          lastChunkIdRef.current = 0;
+        }
         chunkBufferRef.current = [];
       }
 
@@ -98,7 +124,7 @@ export function useTerminalSocket({
         ws.send(JSON.stringify({
           op: "subscribe_terminal",
           sessionId: currentSessionId,
-          afterChunkId: isReconnect ? lastChunkIdRef.current : 0,
+          afterChunkId: lastChunkIdRef.current,
         }));
       };
 
@@ -122,6 +148,7 @@ export function useTerminalSocket({
           const chunk = data.chunk as TerminalChunk;
           if (chunk.id <= lastChunkIdRef.current) return;
           lastChunkIdRef.current = chunk.id;
+          chunkCacheRef.current.push(chunk.chunk);
           const term = terminalRef.current;
           if (term) {
             term.write(chunk.chunk);
@@ -226,5 +253,10 @@ export function useTerminalSocket({
     ws.send(JSON.stringify({ op: "terminate_terminal", sessionId: sessionIdRef.current }));
   }, []);
 
-  return { sendInput, resize, interrupt, terminate, sessionMeta, isConnected };
+  const getChunkCache = useCallback((): SessionChunkCache => ({
+    chunks: chunkCacheRef.current,
+    lastChunkId: lastChunkIdRef.current,
+  }), []);
+
+  return { sendInput, resize, interrupt, terminate, sessionMeta, isConnected, getChunkCache };
 }

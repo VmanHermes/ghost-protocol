@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn test_parse_nvidia_smi_output() {
-        let output = "NVIDIA GeForce RTX 4090, 24564 MiB, 570.86.16, 45, 8200 MiB";
+        let output = "NVIDIA GeForce RTX 4090, 24564, 570.86.16, 45, 8200";
         let info = parse_nvidia_smi_line(output);
         assert!(info.is_some());
         let gpu = info.unwrap();

@@ -8,8 +8,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="0.1.1"
+VERSION="0.2.0"
 DIST_DIR="$ROOT_DIR/dist/ghost-protocol-$VERSION"
+
+echo "==> Building daemon..."
+cd "$ROOT_DIR/daemon"
+cargo build --release 2>&1 | tail -10
 
 echo "==> Building app (frontend + Rust)..."
 cd "$ROOT_DIR/desktop"
@@ -19,8 +23,11 @@ echo "==> Packaging..."
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-# Binary
+# Tauri app binary
 cp "$ROOT_DIR/desktop/src-tauri/target/release/ghost_protocol" "$DIST_DIR/ghost-protocol"
+
+# Daemon binary
+cp "$ROOT_DIR/daemon/target/release/ghost-protocol-daemon" "$DIST_DIR/ghost-protocol-daemon"
 
 # Icon
 cp "$ROOT_DIR/desktop/src-tauri/icons/icon.png" "$DIST_DIR/ghost-protocol.png"
@@ -58,6 +65,7 @@ fi
 
 echo "==> Installing Ghost Protocol..."
 sudo install -Dm755 "$SCRIPT_DIR/ghost-protocol" /usr/local/bin/ghost-protocol
+sudo install -Dm755 "$SCRIPT_DIR/ghost-protocol-daemon" /usr/local/bin/ghost-protocol-daemon
 sudo install -Dm644 "$SCRIPT_DIR/ghost-protocol.png" /usr/local/share/icons/ghost-protocol.png
 sudo install -Dm644 "$SCRIPT_DIR/ghost-protocol.desktop" /usr/share/applications/ghost-protocol.desktop
 
@@ -71,6 +79,7 @@ cat > "$DIST_DIR/uninstall.sh" << 'UNINSTALL'
 set -euo pipefail
 echo "==> Removing Ghost Protocol..."
 sudo rm -f /usr/local/bin/ghost-protocol
+sudo rm -f /usr/local/bin/ghost-protocol-daemon
 sudo rm -f /usr/local/share/icons/ghost-protocol.png
 sudo rm -f /usr/share/applications/ghost-protocol.desktop
 echo "==> Done."

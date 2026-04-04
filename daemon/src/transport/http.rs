@@ -277,3 +277,67 @@ pub async fn system_hardware_status(
     let active = sessions.iter().filter(|s| s.status == "running").count();
     Json(crate::hardware::collect_machine_status(active))
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/hosts
+// ---------------------------------------------------------------------------
+
+pub async fn list_hosts(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::store::hosts::KnownHost>>, (StatusCode, Json<serde_json::Value>)> {
+    state.store.list_known_hosts().map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("db error: {e}") })),
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/hosts
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct AddHostBody {
+    pub name: String,
+    pub tailscale_ip: String,
+}
+
+pub async fn add_host(
+    State(state): State<AppState>,
+    Json(body): Json<AddHostBody>,
+) -> Result<(StatusCode, Json<crate::store::hosts::KnownHost>), (StatusCode, Json<serde_json::Value>)>
+{
+    let id = uuid::Uuid::new_v4().to_string();
+    let url = format!("http://{}:8787", body.tailscale_ip);
+    state
+        .store
+        .add_known_host(&id, &body.name, &body.tailscale_ip, &url)
+        .map(|h| (StatusCode::CREATED, Json(h)))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/hosts/{id}
+// ---------------------------------------------------------------------------
+
+pub async fn remove_host(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    state
+        .store
+        .remove_known_host(&id)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })
+}

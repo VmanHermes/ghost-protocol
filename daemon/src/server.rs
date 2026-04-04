@@ -28,7 +28,45 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
     // 4. Recover sessions
     manager.recover().await;
 
-    // 5. Build app state
+    // 5. Start background host health poller
+    {
+        let store = store.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_default();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if let Ok(hosts) = store.list_known_hosts() {
+                    for host in hosts {
+                        let url = format!("{}/api/system/hardware", host.url);
+                        let status = match client.get(&url).send().await {
+                            Ok(resp) if resp.status().is_success() => {
+                                let caps = resp.json::<serde_json::Value>().await.ok().map(|v| {
+                                    crate::store::hosts::HostCapabilities {
+                                        gpu: v["gpu"]["model"].as_str().map(|s| s.to_string()),
+                                        ram_gb: v["ramGb"].as_f64(),
+                                        hermes: v["tools"]["hermes"].is_string(),
+                                        ollama: v["tools"]["ollama"].is_string(),
+                                    }
+                                });
+                                store.update_host_status(&host.id, "online", caps.as_ref()).ok();
+                                "online"
+                            }
+                            _ => {
+                                store.update_host_status(&host.id, "offline", None).ok();
+                                "offline"
+                            }
+                        };
+                        tracing::debug!(host = %host.name, status, "health poll");
+                    }
+                }
+            }
+        });
+    }
+
+    // 6. Build app state (health poller already spawned above)
     let state = AppState {
         store,
         manager,
@@ -41,7 +79,7 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
             .collect(),
     };
 
-    // 6. Build router
+    // 7. Build router
     let app = Router::new()
         .route("/health", get(http::health))
         .route("/api/system/status", get(http::system_status))
@@ -65,13 +103,15 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
             "/api/terminal/sessions/{id}/terminate",
             post(http::terminate_session),
         )
+        .route("/api/hosts", get(http::list_hosts).post(http::add_host))
+        .route("/api/hosts/{id}", axum::routing::delete(http::remove_host))
         .route("/ws", get(ws::ws_upgrade))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
         .layer(middleware::from_fn(tailscale_guard))
         .layer(Extension(Arc::new(settings.clone())));
 
-    // 7. Bind to all configured hosts
+    // 8. Bind to all configured hosts
     let mut handles = Vec::new();
 
     for host in &settings.bind_hosts {

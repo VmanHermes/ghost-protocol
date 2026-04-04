@@ -1031,3 +1031,91 @@ textarea { resize: vertical; }
   .main-panel { height: 80vh; max-height: 80vh; border: none; }
   .observability { height: auto; max-height: none; }
 }
+
+/* ─── Setup checklist ─── */
+.setup-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #1e2340;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+.setup-checklist-items {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+.setup-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #e2e8f0;
+}
+.setup-checklist-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.setup-checklist-label {
+  white-space: nowrap;
+}
+.setup-checklist-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-checklist-message {
+  font-size: 0.82rem;
+  color: #94a3b8;
+}
+.setup-checklist-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.82rem;
+  color: #e2e8f0;
+}
+.setup-checklist-command code {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.setup-checklist-copy {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.setup-checklist-copy:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+.setup-checklist-dismiss {
+  align-self: flex-end;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.setup-checklist-dismiss:hover {
+  color: #94a3b8;
+}

@@ -1,9 +1,10 @@
-// daemon/src/main.rs
 mod config;
 mod host;
 mod middleware;
+mod server;
 mod store;
 mod terminal;
+mod transport;
 
 use clap::Parser;
 use config::{Cli, Settings};
@@ -26,6 +27,8 @@ async fn main() {
         "starting ghost-protocol-daemon"
     );
 
-    // Server startup will be added in Task 10
-    tracing::info!("daemon ready");
+    if let Err(e) = server::run(settings).await {
+        tracing::error!(error = %e, "daemon exited with error");
+        std::process::exit(1);
+    }
 }

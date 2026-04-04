@@ -1,28 +1,26 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { api, wsUrlFromHttp } from "./api";
+import { api } from "./api";
 import { loadHosts, addHost as persistAddHost, removeHost as persistRemoveHost } from "./hosts";
 import { appLog } from "./log";
 import type {
-  Conversation,
-  ConversationDetail,
-  EventEnvelope,
   HostConnection,
   LocalTerminalSession,
-  Message,
-  RunDetail,
-  RunRecord,
   SavedHost,
-  SystemStatus,
   TerminalSession,
 } from "./types";
 import { Sidebar } from "./components/Sidebar";
-import { ChatView } from "./components/ChatView";
-import { InspectorPanel } from "./components/InspectorPanel";
 import { TerminalWorkspace } from "./components/TerminalWorkspace";
 import { LogViewer } from "./components/LogViewer";
 import "./App.css";
 
+// NOTE: "chat" view is hidden until the Rust daemon adds conversation/agent support.
+// ChatView, InspectorPanel, and related imports are commented out for now.
+// import { ChatView } from "./components/ChatView";
+// import { InspectorPanel } from "./components/InspectorPanel";
+
+// "chat" is kept in the union so Sidebar nav items still type-check,
+// but no panel renders for it until the Rust daemon adds chat support.
 type MainView = "chat" | "terminal" | "logs" | "settings";
 
 function App() {
@@ -34,22 +32,11 @@ function App() {
   const [mainView, setMainView] = useState<MainView>("terminal");
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null);
   const [localSessions, setLocalSessions] = useState<LocalTerminalSession[]>([]);
-  const [actionError, setActionError] = useState("");
+  const [, setActionError] = useState("");
   const [showSetupChecklist, setShowSetupChecklist] = useState(() => loadHosts().length === 0);
   const [hostingStatus, setHostingStatus] = useState<"idle" | "starting" | "active" | "error">("idle");
   const [hostingError, setHostingError] = useState<string | null>(null);
   const [hostingAddress, setHostingAddress] = useState<string | null>(null);
-
-  // Per-active-host UI state
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [messageInput, setMessageInput] = useState("");
-  const [events, setEvents] = useState<EventEnvelope[]>([]);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
-
-  const activeRunIdRef = useRef(activeRunId);
-  useEffect(() => { activeRunIdRef.current = activeRunId; }, [activeRunId]);
 
   // --- Derived state (activeHostId) ---
 
@@ -65,19 +52,8 @@ function App() {
   const activeConnection = activeHostId ? connections.get(activeHostId) ?? null : null;
   const activeHost = activeHostId ? hosts.find((h) => h.id === activeHostId) ?? null : null;
   const activeHostUrl = activeHost?.url ?? null;
-  const activeRuns = activeConnection?.runs ?? [];
   const activeSystemStatus = activeConnection?.systemStatus ?? null;
-  const activeConversations = activeConnection?.conversations ?? [];
   const activeTerminalSessions = activeConnection?.sessions ?? [];
-
-  const selectedConversation = useMemo(
-    () => activeConversations.find((item) => item.id === selectedConversationId) ?? null,
-    [activeConversations, selectedConversationId],
-  );
-  const activeRun = useMemo(
-    () => activeRuns.find((item) => item.id === activeRunId) ?? null,
-    [activeRuns, activeRunId],
-  );
 
   // --- Connection helpers ---
 
@@ -126,13 +102,10 @@ function App() {
 
   const loadHostData = useCallback(async (hostId: string, url: string) => {
     try {
-      const [sessions, runs, conversations, systemStatus] = await Promise.all([
-        api<TerminalSession[]>(url, "/api/terminal/sessions"),
-        api<RunRecord[]>(url, "/api/runs"),
-        api<Conversation[]>(url, "/api/conversations"),
-        api<SystemStatus>(url, "/api/system/status"),
-      ]);
-      updateConnection(hostId, { sessions, runs, conversations, systemStatus });
+      // Only load terminal sessions — conversations, runs, and system/status
+      // are not served by the Rust daemon yet.
+      const sessions = await api<TerminalSession[]>(url, "/api/terminal/sessions");
+      updateConnection(hostId, { sessions });
     } catch (error) {
       appLog.error("app", `Failed to load data for host ${hostId}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -192,159 +165,7 @@ function App() {
     return () => clearInterval(interval);
   }, [checkHostHealth]);
 
-  // Reset per-host UI state when active host changes
-  useEffect(() => {
-    setSelectedConversationId(null);
-    setMessages([]);
-    setActiveRunId(null);
-    setRunDetail(null);
-    setEvents([]);
-    if (activeConnection?.conversations?.length) {
-      setSelectedConversationId(activeConnection.conversations[0].id);
-    }
-    if (activeConnection?.runs?.length) {
-      setActiveRunId(activeConnection.runs[0].id);
-    }
-  }, [activeHostId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Load conversation detail
-  useEffect(() => {
-    if (!selectedConversationId || !activeHostUrl) return;
-    const url = activeHostUrl;
-    api<ConversationDetail>(url, `/api/conversations/${selectedConversationId}`)
-      .then((data) => { setMessages(data.messages); })
-      .catch((error) => {
-        appLog.error("app", `Failed to load conversation: ${error instanceof Error ? error.message : String(error)}`);
-      });
-  }, [selectedConversationId, activeHostUrl]);
-
-  // Load run detail
-  useEffect(() => {
-    if (!activeRunId || !activeHostUrl) return;
-    const url = activeHostUrl;
-    api<RunDetail>(url, `/api/runs/${activeRunId}`)
-      .then((data) => { setRunDetail(data); })
-      .catch((error) => {
-        appLog.error("app", `Failed to load run: ${error instanceof Error ? error.message : String(error)}`);
-      });
-  }, [activeRunId, activeHostUrl]);
-
-  // Conversation WebSocket — scoped to active host
-  useEffect(() => {
-    if (!selectedConversationId || !activeHostUrl) return;
-
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const ws = new WebSocket(wsUrlFromHttp(activeHostUrl));
-
-    ws.onopen = () => {
-      appLog.info("conv-ws", "Connected");
-      ws.send(JSON.stringify({ op: "subscribe", conversationId: selectedConversationId, afterSeq: 0 }));
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.op === "event") {
-        const envelope = data.event as EventEnvelope;
-        setEvents((current) => [...current.slice(-299), envelope]);
-        if (envelope.type === "message_created") {
-          const payload = envelope.payload as { messageId?: string; role?: "user" | "assistant" | "system"; content?: string };
-          if (
-            typeof payload.messageId === "string"
-            && typeof payload.role === "string"
-            && typeof payload.content === "string"
-            && envelope.conversationId === selectedConversationId
-          ) {
-            const nextMessage: Message = {
-              id: payload.messageId,
-              conversationId: selectedConversationId,
-              role: payload.role,
-              content: payload.content,
-              createdAt: envelope.ts,
-              runId: envelope.runId,
-            };
-            setMessages((current) => current.some((item) => item.id === nextMessage.id) ? current : [...current, nextMessage]);
-          }
-        }
-        if (!refreshTimer && activeHostId) {
-          const hostId = activeHostId;
-          const hostUrl = activeHostUrl;
-          refreshTimer = setTimeout(() => {
-            refreshTimer = null;
-            void Promise.all([
-              api<RunRecord[]>(hostUrl, "/api/runs"),
-              api<SystemStatus>(hostUrl, "/api/system/status"),
-            ]).then(([runs, systemStatus]) => {
-              updateConnection(hostId, { runs, systemStatus });
-            });
-          }, 500);
-        }
-        const currentRunId = activeRunIdRef.current;
-        if (envelope.runId && currentRunId === envelope.runId && activeHostUrl) {
-          api<RunDetail>(activeHostUrl, `/api/runs/${envelope.runId}`)
-            .then((data) => setRunDetail(data))
-            .catch(() => {});
-        }
-      } else if (data.op === "error") {
-        appLog.error("conv-ws", `Server error: ${data.message ?? "unknown"}`);
-      }
-    };
-
-    ws.onerror = () => { appLog.error("conv-ws", "WebSocket error event"); };
-    ws.onclose = (event) => {
-      appLog.warn("conv-ws", `Disconnected: code=${event.code} reason=${event.reason || "none"}`);
-    };
-
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      ws.close();
-    };
-  }, [activeHostUrl, selectedConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // --- Action handlers ---
-
-  const handleSendMessage = useCallback(async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedConversationId || !messageInput.trim() || !activeHostUrl) return;
-    const content = messageInput.trim();
-    const url = activeHostUrl;
-    setMessageInput("");
-    setActionError("");
-    await api(url, `/api/conversations/${selectedConversationId}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
-    });
-    const run = await api<{ runId: string }>(url, "/api/runs", {
-      method: "POST",
-      body: JSON.stringify({ conversationId: selectedConversationId, content }),
-    });
-    setActiveRunId(run.runId);
-    if (activeHostId) {
-      const [runs, systemStatus] = await Promise.all([
-        api<RunRecord[]>(url, "/api/runs"),
-        api<SystemStatus>(url, "/api/system/status"),
-      ]);
-      updateConnection(activeHostId, { runs, systemStatus });
-    }
-  }, [activeHostUrl, activeHostId, selectedConversationId, messageInput, updateConnection]);
-
-  const handleRetryRun = useCallback(async () => {
-    if (!activeRunId || !activeHostUrl) return;
-    try {
-      const data = await api<{ runId: string }>(activeHostUrl, `/api/runs/${activeRunId}/retry`, { method: "POST" });
-      setActiveRunId(data.runId);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Retry failed");
-    }
-  }, [activeHostUrl, activeRunId]);
-
-  const handleCancelRun = useCallback(async () => {
-    if (!activeRunId || !activeHostUrl) return;
-    try {
-      await api(activeHostUrl, `/api/runs/${activeRunId}/cancel`, { method: "POST" });
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Cancel failed");
-    }
-  }, [activeHostUrl, activeRunId]);
 
   const handleCreateRemoteSession = useCallback(async (hostId: string, mode: "agent" | "rescue_shell" | "project") => {
     const host = hosts.find((h) => h.id === hostId);
@@ -450,20 +271,6 @@ function App() {
       setActionError(error instanceof Error ? error.message : "Kill local session failed");
     }
   }, [activeTerminalSessionId, localSessions]);
-
-  const handleResolveApproval = useCallback(async (approvalId: string, status: "approved" | "rejected") => {
-    if (!activeHostUrl || !activeHostId) return;
-    try {
-      await api(activeHostUrl, `/api/approvals/${approvalId}/resolve`, {
-        method: "POST",
-        body: JSON.stringify({ status, resolvedBy: "ghost-protocol-app" }),
-      });
-      const systemStatus = await api<SystemStatus>(activeHostUrl, "/api/system/status");
-      updateConnection(activeHostId, { systemStatus });
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Approval resolution failed");
-    }
-  }, [activeHostUrl, activeHostId, updateConnection]);
 
   const handleAddHost = useCallback((name: string, url: string) => {
     const updated = persistAddHost(hosts, name, url);
@@ -633,31 +440,9 @@ function App() {
       />
 
       <section className="main-panel">
-        <div style={{ display: mainView === "chat" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
-          <div className="terminal-header">
-            <div>
-              <h2>{selectedConversation?.title || "Chat"}</h2>
-              <p className="muted">{activeHost ? `${activeHost.name} — Conversation` : "Select a remote host to chat"}</p>
-            </div>
-          </div>
-          {activeHostUrl ? (
-            <ChatView
-              messages={messages}
-              messageInput={messageInput}
-              selectedConversationId={selectedConversationId}
-              activeRunId={activeRunId}
-              actionError={actionError}
-              onChangeMessageInput={setMessageInput}
-              onSendMessage={(e) => void handleSendMessage(e)}
-              onRetryRun={() => void handleRetryRun()}
-              onCancelRun={() => void handleCancelRun()}
-            />
-          ) : (
-            <div className="empty-state" style={{ padding: "2rem" }}>
-              Select a remote terminal tab to access chat
-            </div>
-          )}
-        </div>
+        {/* Chat view hidden — Rust daemon does not serve conversation/agent endpoints yet */}
+        {/* Will be restored when the Rust daemon adds chat support */}
+
         <div style={{ display: mainView === "terminal" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
           <TerminalWorkspace
             hosts={hosts}
@@ -699,14 +484,6 @@ function App() {
                       <span className="settings-info-value">{activeSystemStatus.connection?.bindHost ?? "—"}:{activeSystemStatus.connection?.bindPort ?? "—"}</span>
                     </div>
                     <div className="settings-info-item">
-                      <span className="settings-info-label">Telegram</span>
-                      <span className="settings-info-value">{activeSystemStatus.connection?.telegramEnabled ? "Enabled" : "Disabled"}</span>
-                    </div>
-                    <div className="settings-info-item">
-                      <span className="settings-info-label">Active agents</span>
-                      <span className="settings-info-value">{activeSystemStatus.activeAgents?.length ?? 0}</span>
-                    </div>
-                    <div className="settings-info-item">
                       <span className="settings-info-label">Terminal sessions</span>
                       <span className="settings-info-value">{activeTerminalSessions.length} total</span>
                     </div>
@@ -725,21 +502,8 @@ function App() {
         </div>
       </section>
 
-      <InspectorPanel
-        activeHostName={activeHost?.name ?? null}
-        activeRun={activeRun}
-        runs={activeRuns}
-        runDetail={runDetail}
-        systemStatus={activeSystemStatus}
-        terminalSessionCount={
-          activeTerminalSessions.filter((s) => s.status === "created" || s.status === "running").length
-          + localSessions.filter((s) => s.status === "running").length
-        }
-        events={events}
-        activeRunId={activeRunId}
-        onSelectRun={setActiveRunId}
-        onResolveApproval={(id, status) => void handleResolveApproval(id, status)}
-      />
+      {/* InspectorPanel hidden — agent/run/approval observability not available in Rust daemon yet */}
+      {/* Will be restored when the Rust daemon adds agent support */}
     </main>
   );
 }

@@ -42,7 +42,6 @@ pub fn run() {
         .manage(PtyManager::new())
         .invoke_handler(tauri::generate_handler![
             pty_spawn, pty_write, pty_resize, pty_kill,
-            detect::detect_python,
             detect::detect_tmux,
             detect::detect_tailscale,
             detect::detect_daemon,

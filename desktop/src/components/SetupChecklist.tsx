@@ -18,7 +18,6 @@ type Props = {
 };
 
 const INITIAL_CHECKS: CheckItem[] = [
-  { name: "Python", key: "python", status: "pending", version: null, minVersion: "3.10" },
   { name: "tmux", key: "tmux", status: "pending", version: null, minVersion: "3.0" },
   { name: "Tailscale", key: "tailscale", status: "pending", version: null, minVersion: "1.0" },
   { name: "Tailscale mesh", key: "tailscale_mesh", status: "pending", version: null, minVersion: "" },
@@ -29,13 +28,6 @@ type InstallCommands = Record<string, Record<string, string>>;
 function getInstallCommands(packageManager: string): InstallCommands {
   const pm = packageManager;
   return {
-    python: {
-      apt: "sudo apt install python3",
-      dnf: "sudo dnf install python3",
-      pacman: "sudo pacman -S python",
-      brew: "brew install python3",
-      unknown: "Install Python 3.10+ using your system package manager",
-    },
     tmux: {
       apt: "sudo apt install tmux",
       dnf: "sudo dnf install tmux",
@@ -86,8 +78,7 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
 
     const results: CheckItem[] = [...INITIAL_CHECKS];
 
-    const [pythonResult, tmuxResult, tailscaleResult, tailscaleMeshResult] = await Promise.allSettled([
-      invoke<string>("detect_python"),
+    const [tmuxResult, tailscaleResult, tailscaleMeshResult] = await Promise.allSettled([
       invoke<string>("detect_tmux"),
       invoke<string>("detect_tailscale"),
       invoke<string>("detect_tailscale_ip"),
@@ -110,10 +101,9 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
       }
     };
 
-    processResult(0, pythonResult);
-    processResult(1, tmuxResult);
-    processResult(2, tailscaleResult);
-    processResult(3, tailscaleMeshResult);
+    processResult(0, tmuxResult);
+    processResult(1, tailscaleResult);
+    processResult(2, tailscaleMeshResult);
 
     setChecks(results);
 

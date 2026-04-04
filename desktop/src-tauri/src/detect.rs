@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Returns ~/.local/share/ghost-protocol/daemon-venv
-fn daemon_venv_dir() -> PathBuf {
+/// Returns the install path for the Rust daemon binary.
+/// ~/.local/share/ghost-protocol/ghost-protocol-daemon
+fn daemon_bin_path() -> PathBuf {
     let base = std::env::var("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
             PathBuf::from(home).join(".local/share")
         });
-    base.join("ghost-protocol/daemon-venv")
+    base.join("ghost-protocol").join("ghost-protocol-daemon")
 }
 
 /// Compare "major.minor" strings. Returns true if actual >= minimum.
@@ -41,24 +42,6 @@ pub fn detect_package_manager() -> Result<String, String> {
         }
     }
     Err("unknown".to_string())
-}
-
-#[tauri::command]
-pub fn detect_python() -> Result<String, String> {
-    let output = Command::new("python3")
-        .arg("--version")
-        .output()
-        .map_err(|_| "not_found".to_string())?;
-    if !output.status.success() {
-        return Err("not_found".to_string());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let version = stdout.trim().strip_prefix("Python ").unwrap_or(stdout.trim());
-    if version_gte(version, "3.10") {
-        Ok(version.to_string())
-    } else {
-        Err(format!("version_too_old:{}", version))
-    }
 }
 
 #[tauri::command]
@@ -135,14 +118,11 @@ pub fn detect_tailscale_ip() -> Result<String, String> {
 
 #[tauri::command]
 pub fn install_daemon() -> Result<String, String> {
-    let venv_dir = daemon_venv_dir();
-    let venv_python = venv_dir.join("bin/python3");
+    let bin_path = daemon_bin_path();
 
-    // Check if already installed in venv
-    if venv_python.exists() {
-        let check = Command::new(&venv_python)
-            .args(["-c", "import ghost_protocol_daemon"])
-            .output();
+    // Check if already installed and working
+    if bin_path.exists() {
+        let check = Command::new(&bin_path).arg("--help").output();
         if let Ok(output) = check {
             if output.status.success() {
                 return Ok("already_installed".to_string());
@@ -150,49 +130,76 @@ pub fn install_daemon() -> Result<String, String> {
         }
     }
 
-    // Create venv if it doesn't exist (python3 -m venv always has pip)
-    if !venv_python.exists() {
-        let result = Command::new("python3")
-            .args(["-m", "venv", venv_dir.to_str().unwrap()])
-            .output()
-            .map_err(|e| format!("install_failed:venv:{}", e))?;
-        if !result.status.success() {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("install_failed:venv:{}", stderr.chars().take(200).collect::<String>()));
-        }
+    // Look for bundled binary candidates
+    let candidates: Vec<PathBuf> = vec![
+        // Same directory as the app executable
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("ghost-protocol-daemon")))
+            .unwrap_or_default(),
+        // Development path: relative to the Tauri src dir
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| {
+                d.join("../../daemon/target/release/ghost-protocol-daemon")
+            }))
+            .unwrap_or_default(),
+        // Also try from the project root (common dev layout)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../daemon/target/release/ghost-protocol-daemon"),
+    ];
+
+    let source = candidates.iter().find(|p| {
+        !p.as_os_str().is_empty() && p.exists()
+    });
+
+    let source = match source {
+        Some(p) => p,
+        None => return Err("install_failed:binary_not_found".to_string()),
+    };
+
+    // Create parent directory
+    if let Some(parent) = bin_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("install_failed:mkdir:{}", e))?;
     }
 
-    // Install into the venv
-    let output = Command::new(&venv_python)
-        .args(["-m", "pip", "install",
-               "git+https://github.com/VmanHermes/ghost-protocol.git#subdirectory=backend"])
-        .output()
-        .map_err(|e| format!("install_failed:{}", e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("install_failed:{}", stderr.chars().take(200).collect::<String>()));
+    // Copy binary to install path
+    std::fs::copy(source, &bin_path)
+        .map_err(|e| format!("install_failed:copy:{}", e))?;
+
+    // chmod +x
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(&bin_path, perms)
+            .map_err(|e| format!("install_failed:chmod:{}", e))?;
     }
+
     Ok("installed".to_string())
 }
 
 #[tauri::command]
 pub fn start_daemon(bind_host: String, port: u16) -> Result<String, String> {
-    let venv_python = daemon_venv_dir().join("bin/python3");
-    let python = if venv_python.exists() {
-        venv_python.to_str().unwrap().to_string()
+    let bin_path = daemon_bin_path();
+    let bin = if bin_path.exists() {
+        bin_path.to_str().unwrap().to_string()
     } else {
-        "python3".to_string()
+        // Fallback: try PATH
+        "ghost-protocol-daemon".to_string()
     };
 
-    // Spawn daemon as a detached process via setsid
     let bind = format!("{},127.0.0.1", bind_host);
     let cidrs = "100.64.0.0/10,fd7a:115c:a1e0::/48,127.0.0.1/32";
 
     let result = Command::new("setsid")
-        .args([&python, "-m", "ghost_protocol_daemon"])
-        .env("GHOST_PROTOCOL_BIND_HOST", &bind)
-        .env("GHOST_PROTOCOL_BIND_PORT", port.to_string())
-        .env("GHOST_PROTOCOL_ALLOWED_CIDRS", cidrs)
+        .args([
+            &bin,
+            "--bind-host", &bind,
+            "--bind-port", &port.to_string(),
+            "--allowed-cidrs", cidrs,
+        ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -207,7 +214,7 @@ pub fn start_daemon(bind_host: String, port: u16) -> Result<String, String> {
 #[tauri::command]
 pub fn stop_daemon() -> Result<String, String> {
     let result = Command::new("pkill")
-        .args(["-f", "python.*ghost_protocol_daemon"])
+        .args(["-f", "ghost-protocol-daemon"])
         .output()
         .map_err(|e| format!("not_running:{}", e))?;
     if result.status.success() {

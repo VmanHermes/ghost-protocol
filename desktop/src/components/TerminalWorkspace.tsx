@@ -134,6 +134,7 @@ export function TerminalWorkspace({
     baseUrl: activeBaseUrl,
     sessionId: remoteSessionId,
     terminalRef,
+    isActive: !isLocalSession,
     initialCache,
     onSessionStatusChange: onRemoteSessionStatusChange,
     onError: setError,
@@ -148,6 +149,7 @@ export function TerminalWorkspace({
   } = useLocalTerminal({
     sessionId: isLocalSession ? activeSessionId : null,
     terminalRef,
+    isActive: isLocalSession,
     onSessionStatusChange: onLocalSessionStatusChange,
     onError: setError,
   });

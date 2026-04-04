@@ -48,6 +48,9 @@ pub fn run() {
             detect::detect_daemon,
             detect::detect_platform,
             detect::detect_package_manager,
+            detect::detect_tailscale_ip,
+            detect::start_daemon,
+            detect::stop_daemon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

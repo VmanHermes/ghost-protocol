@@ -104,3 +104,63 @@ pub fn detect_daemon() -> Result<String, String> {
         Err("not_running".to_string())
     }
 }
+
+#[tauri::command]
+pub fn detect_tailscale_ip() -> Result<String, String> {
+    let output = Command::new("tailscale")
+        .args(["ip", "-4"])
+        .output()
+        .map_err(|_| "not_connected".to_string())?;
+    if !output.status.success() {
+        return Err("not_connected".to_string());
+    }
+    let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if ip.is_empty() {
+        return Err("not_connected".to_string());
+    }
+    Ok(ip)
+}
+
+#[tauri::command]
+pub fn start_daemon(bind_host: String, port: u16) -> Result<String, String> {
+    // Pre-check: is the daemon package installed?
+    let check = Command::new("python3")
+        .args(["-c", "import ghost_protocol_daemon"])
+        .output()
+        .map_err(|_| "not_installed".to_string())?;
+    if !check.status.success() {
+        return Err("not_installed".to_string());
+    }
+
+    // Spawn daemon as a detached process via setsid
+    let bind = format!("{},127.0.0.1", bind_host);
+    let cidrs = "100.64.0.0/10,fd7a:115c:a1e0::/48,127.0.0.1/32";
+
+    let result = Command::new("setsid")
+        .args(["python3", "-m", "ghost_protocol_daemon"])
+        .env("GHOST_PROTOCOL_BIND_HOST", &bind)
+        .env("GHOST_PROTOCOL_BIND_PORT", port.to_string())
+        .env("GHOST_PROTOCOL_ALLOWED_CIDRS", cidrs)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    match result {
+        Ok(_) => Ok("spawned".to_string()),
+        Err(e) => Err(format!("spawn_failed:{}", e)),
+    }
+}
+
+#[tauri::command]
+pub fn stop_daemon() -> Result<String, String> {
+    let result = Command::new("pkill")
+        .args(["-f", "python.*ghost_protocol_daemon"])
+        .output()
+        .map_err(|e| format!("not_running:{}", e))?;
+    if result.status.success() {
+        Ok("stopped".to_string())
+    } else {
+        Err("not_running".to_string())
+    }
+}

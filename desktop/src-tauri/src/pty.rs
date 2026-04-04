@@ -125,7 +125,7 @@ impl PtyManager {
                 };
                 match status {
                     Ok(Some(exit_status)) => {
-                        let code = exit_status.exit_code() as i32;
+                        let code = i32::try_from(exit_status.exit_code()).unwrap_or(-1);
                         let _ = waiter_app.emit(
                             "pty:status",
                             PtyStatus {

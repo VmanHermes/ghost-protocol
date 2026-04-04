@@ -59,7 +59,7 @@ export function useLocalTerminal({
       terminal.write(data);
     }
     chunkBufferRef.current = [];
-  });
+  }, [terminalRef]);
 
   // Main event listener lifecycle
   useEffect(() => {
@@ -79,10 +79,11 @@ export function useLocalTerminal({
     if (terminal) terminal.reset();
     chunkBufferRef.current = [];
 
+    const sessionCreatedAt = new Date().toISOString();
     setSessionMeta({
       id: currentSessionId,
       status: "running",
-      createdAt: new Date().toISOString(),
+      createdAt: sessionCreatedAt,
     });
     setIsConnected(true);
 
@@ -105,7 +106,7 @@ export function useLocalTerminal({
       const updated: LocalTerminalSession = {
         id: currentSessionId,
         status,
-        createdAt: sessionMeta?.createdAt ?? new Date().toISOString(),
+        createdAt: sessionCreatedAt,
         exitCode: event.payload.exit_code,
       };
       setSessionMeta(updated);

@@ -334,7 +334,6 @@ export function TerminalWorkspace({
                         {isConnected && (
                           <>
                             <button className="terminal-add-menu-item terminal-add-menu-sub" title="Raw shell for manual debugging and recovery" onClick={() => { onCreateRemoteSession(host.id, "rescue_shell"); setShowAddMenu(false); }}>rescue shell</button>
-                            <button className="terminal-add-menu-item terminal-add-menu-sub" title="Hermes AI agent with tool access and approval flow" onClick={() => { onCreateRemoteSession(host.id, "agent"); setShowAddMenu(false); }}>agent</button>
                             <button className="terminal-add-menu-item terminal-add-menu-sub" title="Shell scoped to the project working directory" onClick={() => { onCreateRemoteSession(host.id, "project"); setShowAddMenu(false); }}>project</button>
                           </>
                         )}

@@ -104,6 +104,8 @@ export function useLocalTerminal({
         } else {
           chunkBufferRef.current.push(event.payload.data);
         }
+      } else {
+        chunkBufferRef.current.push(event.payload.data);
       }
     });
 

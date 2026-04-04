@@ -1,34 +1,102 @@
-# Ghost Protocol project plan
+# Ghost Protocol — Project Plan
 
-## Goal
-Build a Tauri 2 Ghost Protocol application that becomes the primary interface for Hermes, backed by a headless daemon that exposes explicit HTTP and WebSocket APIs over Tailscale.
+## Vision
 
-## Phase 1 focus
-1. Inspect current Hermes runtime, gateway, and Telegram integration.
-2. Define a stable event envelope and resumable WebSocket protocol.
-3. Implement a smallest useful end-to-end backend slice.
-4. Scaffold the Ghost Protocol app around that transport.
+A unified control plane for the Hermes AI agent across all your devices. Host terminal and chat sessions on any Linux machine, join from any other device on your Tailscale mesh, and eventually from iPhone.
 
-## Existing architecture summary
-- The current Hermes runtime lives at `~/.hermes/hermes-agent`.
-- `run_agent.py` contains the `AIAgent` orchestration loop.
-- `gateway/run.py` adapts messaging platforms to the runtime and already bridges callbacks like `status_callback`, `step_callback`, `tool_start_callback`, and `tool_complete_callback`.
-- `gateway/platforms/telegram.py` is the current Telegram adapter.
-- `gateway/platforms/api_server.py` already uses `aiohttp`, which is a good fit for a boring explicit daemon transport.
+## Current status: v0.1.1
 
-## Key design choice
-Phase 1 uses a thin sidecar daemon in this project rather than invasive refactors inside the existing Hermes source tree. The daemon imports the existing runtime and turns its lifecycle into a durable event stream.
+The desktop app and backend daemon are functional for multi-machine terminal sharing over Tailscale.
 
-## Smallest end-to-end slice
-- create/list conversations
-- append user messages
-- start a run that invokes the existing `AIAgent`
-- emit and persist run/message/tool/status events
-- stream events over WebSocket with resume by sequence
-- show conversation list, chat, run live state, and event timeline in the Ghost Protocol app
+### What works
 
-## Deferred after Phase 1
-- Telegram fully routed through the new event pipeline
-- approval queue UX and rich diff viewers
-- artifact downloads/previews beyond basic linkage
-- stronger Tailscale service identity integration and deployment automation
+- **Tauri 2 desktop app** — React + TypeScript + xterm.js
+- **Local terminal sessions** — PTY via portable-pty in the Tauri backend
+- **Setup checklist** — detects Python, tmux, Tailscale, mesh connectivity, and daemon; shows install commands per distro
+- **Host a connection** — auto-installs daemon, starts it bound to Tailscale IP, detached process survives app close
+- **Join a connection** — add remote hosts by Tailscale IP, health polling, reconnect on failure
+- **Remote terminal sessions** — create/view terminal sessions on connected hosts via WebSocket
+- **tmux-backed session persistence** — sessions survive daemon restarts, no input lag
+- **Log viewer** — unified client + server log stream with filtering and export
+- **Packaged release** — `scripts/package-linux.sh` builds a redistributable tarball with install script
+- **Wayland compatibility** — `.desktop` launcher includes WebKit/GDK workarounds
+
+### Known issues
+
+- Remote terminal creation from the joining machine needs debugging (logging added, needs testing after reinstall)
+- Chat/conversation UI exists but is not wired to working backend endpoints yet
+
+---
+
+## Phase 2: Chat + Terminal convergence
+
+**Goal:** Restore the AI chat interface and make it work alongside shared terminals.
+
+### 2a: Chat sessions (next)
+
+- Wire ChatView component to backend conversation + message APIs
+- Real-time message streaming via WebSocket
+- Conversation list in sidebar (create, switch, delete)
+- Messages persist in backend event store
+
+### 2b: Terminal ↔ Chat sync
+
+- Link a terminal session to a conversation — agent can see terminal output, user can see agent actions
+- Agent commands execute in the linked terminal
+- Shared context: both local and remote clients see the same chat + terminal state
+
+### 2c: Multi-client chat
+
+- Multiple clients connected to the same host see the same conversation in real time
+- Presence indicators (who's connected)
+- Input from any client is visible to all
+
+---
+
+## Phase 3: Observability + remote control
+
+**Goal:** Visibility into what's actually running across machines.
+
+### 3a: Task observability
+
+- Dashboard showing active agent runs, tool executions, and their status
+- Works for both local and remote hosts
+- History of completed tasks with duration, outcome, and logs
+
+### 3b: code-server integration
+
+- Open a code-server instance on the remote host from a link below the terminal
+- Allows full IDE access to the remote machine's workspace
+
+### 3c: Remote desktop / screenshot
+
+- Command to take a screenshot of the remote machine's display
+- Stretch: lightweight remote desktop view (VNC/RDP over Tailscale)
+
+---
+
+## Phase 4: iPhone support
+
+**Goal:** Join connections from iPhone.
+
+- Native iOS app or responsive web client
+- Read-only terminal view at minimum, interactive stretch goal
+- Chat interface works fully
+- Push notifications for agent events (task complete, approval needed)
+
+---
+
+## Architecture principles
+
+- **Hermes runtime stays headless** — Ghost Protocol wraps it, doesn't replace it
+- **Daemon is the source of truth** — all state flows through the Python backend
+- **Tailscale for networking** — WireGuard-encrypted mesh, no HTTPS certificates needed for security
+- **Desktop app is a thin client** — Tauri 2 + React, talks to daemon over HTTP + WebSocket
+- **Sessions survive daemon restarts** — tmux keeps sessions alive, daemon reattaches on recovery
+
+## Workspace layout
+
+- `backend/` — Python daemon: event store, projections, HTTP + WebSocket transport
+- `desktop/` — Tauri 2 app: React + TypeScript frontend, Rust backend for PTY and system detection
+- `docs/` — architecture, specs, plans
+- `scripts/` — packaging and deployment

@@ -230,97 +230,101 @@ export function TerminalWorkspace({
 
   return (
     <section className="terminal-workspace">
-      {/* Session tabs — local first, then remote */}
-      <div className="terminal-tabs">
-        {/* Local sessions */}
-        {activeLocalSessions.map((session) => (
-          <button
-            key={session.id}
-            className={`terminal-tab ${session.id === activeSessionId ? "active" : ""}`}
-            onClick={() => onSelect(session.id)}
-          >
-            <span className="terminal-tab-dot" style={{ background: "#10b981" }} />
-            <span className="terminal-tab-source">Local</span>
-            {" · shell"}
-            <span
-              className="terminal-tab-close"
-              onClick={(e) => { e.stopPropagation(); onKillLocalSession(session.id); }}
-              title="Kill session"
+      {/* Session tab bar — tabs scroll, action buttons stay fixed */}
+      <div className="terminal-tab-bar">
+        <div className="terminal-tabs">
+          {/* Local sessions */}
+          {activeLocalSessions.map((session) => (
+            <button
+              key={session.id}
+              className={`terminal-tab ${session.id === activeSessionId ? "active" : ""}`}
+              onClick={() => onSelect(session.id)}
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </span>
-          </button>
-        ))}
-
-        {/* Remote sessions */}
-        {activeRemoteSessions.map((entry) => (
-          <button
-            key={entry.session.id}
-            className={`terminal-tab ${entry.session.id === activeSessionId ? "active" : ""}`}
-            onClick={() => onSelect(entry.session.id)}
-          >
-            <span
-              className="terminal-tab-dot"
-              style={{ background: SESSION_DOT_COLORS[entry.session.status] ?? "#6b7280" }}
-            />
-            <span className="terminal-tab-source">{entry.hostName}</span>
-            {" · "}{entry.session.name || entry.session.mode.replace("_", " ")}
-            <span
-              className="terminal-tab-close"
-              onClick={(e) => { e.stopPropagation(); onKillRemoteSession(entry.session.id); }}
-              title="Kill session"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </span>
-          </button>
-        ))}
-
-        {/* Add local session button */}
-        <button className="terminal-tab-add" onClick={onCreateLocalSession} title="New local shell">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
-
-        {/* Remote session dropdown (only when hosts exist) */}
-        {hosts.length > 0 && (
-          <div className="terminal-add-wrapper" ref={addMenuRef}>
-            <button className="terminal-remote-add" onClick={() => setShowAddMenu(!showAddMenu)} title="New remote session">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
+              <span className="terminal-tab-dot" style={{ background: "#10b981" }} />
+              <span className="terminal-tab-source">Local</span>
+              {" · shell"}
+              <span
+                className="terminal-tab-close"
+                onClick={(e) => { e.stopPropagation(); onKillLocalSession(session.id); }}
+                title="Kill session"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </span>
             </button>
-            {showAddMenu && (
-              <div className="terminal-add-menu">
-                {hosts.map((host) => {
-                  const conn = hostConnections.get(host.id);
-                  const isConnected = conn?.state === "connected";
-                  return (
-                    <div key={host.id} className="terminal-add-menu-group">
-                      <div className={`terminal-add-menu-host ${isConnected ? "" : "disabled"}`}>
-                        <span className={`status-dot ${conn?.state ?? "idle"}`} />
-                        {host.name}
-                        {!isConnected && " (unreachable)"}
+          ))}
+
+          {/* Remote sessions */}
+          {activeRemoteSessions.map((entry) => (
+            <button
+              key={entry.session.id}
+              className={`terminal-tab ${entry.session.id === activeSessionId ? "active" : ""}`}
+              onClick={() => onSelect(entry.session.id)}
+            >
+              <span
+                className="terminal-tab-dot"
+                style={{ background: SESSION_DOT_COLORS[entry.session.status] ?? "#6b7280" }}
+              />
+              <span className="terminal-tab-source">{entry.hostName}</span>
+              {" · "}{entry.session.name || entry.session.mode.replace("_", " ")}
+              <span
+                className="terminal-tab-close"
+                onClick={(e) => { e.stopPropagation(); onKillRemoteSession(entry.session.id); }}
+                title="Kill session"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Action buttons — outside scrollable area so dropdown isn't clipped */}
+        <div className="terminal-tab-actions">
+          <button className="terminal-tab-add" onClick={onCreateLocalSession} title="New local shell">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+
+          {/* Remote session dropdown (only when hosts exist) */}
+          {hosts.length > 0 && (
+            <div className="terminal-add-wrapper" ref={addMenuRef}>
+              <button className="terminal-remote-add" onClick={() => setShowAddMenu(!showAddMenu)} title="New remote session">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {showAddMenu && (
+                <div className="terminal-add-menu">
+                  {hosts.map((host) => {
+                    const conn = hostConnections.get(host.id);
+                    const isConnected = conn?.state === "connected";
+                    return (
+                      <div key={host.id} className="terminal-add-menu-group">
+                        <div className={`terminal-add-menu-host ${isConnected ? "" : "disabled"}`}>
+                          <span className={`status-dot ${conn?.state ?? "idle"}`} />
+                          {host.name}
+                          {!isConnected && " (unreachable)"}
+                        </div>
+                        {isConnected && (
+                          <>
+                            <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "rescue_shell"); setShowAddMenu(false); }}>rescue shell</button>
+                            <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "agent"); setShowAddMenu(false); }}>agent</button>
+                            <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "project"); setShowAddMenu(false); }}>project</button>
+                          </>
+                        )}
                       </div>
-                      {isConnected && (
-                        <>
-                          <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "rescue_shell"); setShowAddMenu(false); }}>rescue shell</button>
-                          <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "agent"); setShowAddMenu(false); }}>agent</button>
-                          <button className="terminal-add-menu-item terminal-add-menu-sub" onClick={() => { onCreateRemoteSession(host.id, "project"); setShowAddMenu(false); }}>project</button>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {setupChecklist && (

@@ -5,33 +5,63 @@
 ![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61dafb)
 ![Backend](https://img.shields.io/badge/backend-Python-3776ab)
 
-Ghost Protocol is the new primary interface for Hermes, using a headless Linux daemon plus a Tauri 2 desktop client.
+Ghost Protocol is a multi-machine terminal and AI agent interface built on Tailscale. It lets you host a connection on one Linux machine and join from another, sharing terminal sessions over a private mesh network. The long-term goal is a unified control plane for the Hermes AI agent runtime across all your devices.
 
-Phase 1 goals implemented here:
-- inspect and preserve the existing Hermes runtime instead of rebuilding orchestration
-- add an explicit persistent event log with a stable event envelope
-- expose HTTP + WebSocket transport for conversations, runs, and live events
-- scaffold a Tauri 2 + React + Vite app under the Ghost Protocol name against the same backend API
+## What it does
 
-Workspace layout:
-- `backend/` — Python daemon, event store, projections, HTTP and WebSocket transport
-- `desktop/` — Tauri 2 Ghost Protocol client (React + TypeScript)
-- `docs/` — architecture notes, implementation notes, and phase plan
+- **Host a connection** — start the daemon on any machine, bound to its Tailscale IP. Other devices on your mesh can connect.
+- **Join a connection** — add a remote host by Tailscale IP. See its terminal sessions and create new ones.
+- **Shared terminals** — terminal sessions persist via the backend daemon. Multiple clients can view and interact with the same session.
+- **Setup checklist** — guided onboarding that detects Python, tmux, Tailscale, mesh connectivity, and the daemon, with one-click install commands.
+- **Log viewer** — unified client and server logs for debugging connection lifecycle.
 
-Current architecture decision:
-- keep Hermes runtime headless and outside the Ghost Protocol shell
-- use the existing `AIAgent` runtime from `~/.hermes/hermes-agent`
-- add a thin adapter layer that emits persistent events and exposes explicit APIs
-- use WebSocket for primary realtime delivery and HTTP for request-response APIs
+## Architecture
+
+```
+┌─────────────────────┐        Tailscale mesh        ┌─────────────────────┐
+│  Machine A (host)   │◄────────────────────────────►│  Machine B (join)   │
+│                     │     HTTP + WebSocket          │                     │
+│  ghost-protocol     │                               │  ghost-protocol     │
+│  (Tauri 2 app)      │                               │  (Tauri 2 app)      │
+│       │              │                               │                     │
+│       ▼              │                               │                     │
+│  ghost_protocol_     │                               │                     │
+│  daemon (Python)     │                               │                     │
+│       │              │                               │                     │
+│       ▼              │                               │                     │
+│  terminal sessions   │                               │                     │
+│  (PTY / tmux)        │                               │                     │
+└─────────────────────┘                               └─────────────────────┘
+```
+
+- `backend/` — Python daemon with HTTP + WebSocket APIs for terminal sessions, conversations, and events
+- `desktop/` — Tauri 2 desktop client (React + TypeScript + xterm.js)
+- `docs/` — architecture, design specs, and project plan
 
 ## Requirements
-- Linux desktop
-- Python 3.11+
-- Node.js + npm
-- Rust + Cargo
-- a working Hermes runtime at `~/.hermes/hermes-agent`
 
-## Install
+- Linux (Arch, Ubuntu, Fedora, etc.)
+- Python 3.10+
+- Tailscale installed and connected to a mesh
+- For development: Node.js + npm, Rust + Cargo
+
+## Install (packaged release)
+
+Download the latest release from GitHub:
+
+```bash
+# Download and extract
+tar xzf ghost-protocol-0.1.1-linux-x86_64.tar.gz
+cd ghost-protocol-0.1.1
+
+# Install system-wide
+sudo ./install.sh
+```
+
+The app auto-installs the Python daemon and its dependencies when you click "Host a Connection".
+
+## Install (from source)
+
 ```bash
 git clone git@github.com:VmanHermes/ghost-protocol.git
 cd ghost-protocol
@@ -39,38 +69,61 @@ npm --prefix desktop install
 ```
 
 ## Run
-Preferred local workflow:
+
+### Packaged app
+
+Launch from your application menu, or:
 ```bash
-systemctl --user enable --now ghost-protocol-backend.service
-./scripts/open-app.sh
+ghost-protocol
 ```
 
-Manual start:
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-python -m ghost_protocol_daemon.server
+### Development
 
-cd ../desktop
-npm install
+```bash
+cd desktop
 npm run tauri dev
 ```
 
-## Useful commands
+The backend daemon can be started separately for development:
 ```bash
-systemctl --user status ghost-protocol-backend.service --no-pager
-journalctl --user -u ghost-protocol-backend.service -f
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+python -m ghost_protocol_daemon.server
+```
+
+## Usage
+
+1. **First launch** — the setup checklist guides you through installing Python, tmux, and Tailscale, and connecting to a Tailscale mesh.
+2. **Host a connection** — click the play button in the sidebar. This installs/starts the daemon bound to your Tailscale IP.
+3. **Join from another machine** — on a second machine, click "Add Host" and enter the first machine's Tailscale IP (e.g. `http://100.x.x.x:8787`).
+4. **Create terminals** — use the `+` button to create local terminals, or the dropdown to create sessions on a connected remote host.
+5. **View logs** — click "Logs" in the sidebar to see client and server logs for debugging.
+
+## Useful commands
+
+```bash
+# Check daemon status
+curl http://127.0.0.1:8787/health
+
+# List Tailscale IP
+tailscale ip -4
+
+# Build a release package
+bash scripts/package-linux.sh
+
+# Backend type-check
 python3 -m py_compile backend/src/ghost_protocol_daemon/*.py
-cd desktop && npm run build
+
+# Frontend type-check
+cd desktop && npx tsc --noEmit
+
+# Cargo check
 cd desktop/src-tauri && cargo check
 ```
 
-## Notes
-Telegram is not replaced in Hermes itself. This project builds the new primary interface and daemon event pipeline while preserving the current runtime path for later Telegram adapter unification.
+## Docs
 
-See also:
-- `docs/runbook.md`
-- `docs/architecture.md`
-- `docs/implementation-notes.md`
+- [Project plan](docs/project-plan.md) — roadmap and current status
+- [Architecture](docs/architecture.md) — system design
+- [Runbook](docs/runbook.md) — operational reference

@@ -22,7 +22,6 @@ const INITIAL_CHECKS: CheckItem[] = [
   { name: "tmux", key: "tmux", status: "pending", version: null, minVersion: "3.0" },
   { name: "Tailscale", key: "tailscale", status: "pending", version: null, minVersion: "1.0" },
   { name: "Tailscale mesh", key: "tailscale_mesh", status: "pending", version: null, minVersion: "" },
-  { name: "Daemon", key: "daemon", status: "pending", version: null, minVersion: "" },
 ];
 
 type InstallCommands = Record<string, Record<string, string>>;
@@ -54,10 +53,6 @@ function getInstallCommands(packageManager: string): InstallCommands {
     tailscale_mesh: {
       [pm]: "sudo systemctl enable --now tailscaled && sudo tailscale up",
       unknown: "sudo systemctl enable --now tailscaled && sudo tailscale up",
-    },
-    daemon: {
-      [pm]: "pip install ghost-protocol-daemon && ghost-protocol-daemon",
-      unknown: "pip install ghost-protocol-daemon && ghost-protocol-daemon",
     },
   };
 }
@@ -91,12 +86,11 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
 
     const results: CheckItem[] = [...INITIAL_CHECKS];
 
-    const [pythonResult, tmuxResult, tailscaleResult, tailscaleMeshResult, daemonResult] = await Promise.allSettled([
+    const [pythonResult, tmuxResult, tailscaleResult, tailscaleMeshResult] = await Promise.allSettled([
       invoke<string>("detect_python"),
       invoke<string>("detect_tmux"),
       invoke<string>("detect_tailscale"),
       invoke<string>("detect_tailscale_ip"),
-      invoke<string>("detect_daemon"),
     ]);
 
     const processResult = (
@@ -120,13 +114,18 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
     processResult(1, tmuxResult);
     processResult(2, tailscaleResult);
     processResult(3, tailscaleMeshResult);
-    processResult(4, daemonResult);
 
     setChecks(results);
 
-    if (results[4].status === "ok" && !hostDetectedRef.current) {
-      hostDetectedRef.current = true;
-      onHostDetected("This Computer", "http://127.0.0.1:8787");
+    // Auto-detect local daemon if running (add localhost as a host)
+    if (!hostDetectedRef.current) {
+      try {
+        await invoke<string>("detect_daemon");
+        hostDetectedRef.current = true;
+        onHostDetected("This Computer", "http://127.0.0.1:8787");
+      } catch {
+        // Daemon not running — that's fine, user can start it via "Host a Connection"
+      }
     }
 
     if (results.every((c) => c.status === "ok")) {

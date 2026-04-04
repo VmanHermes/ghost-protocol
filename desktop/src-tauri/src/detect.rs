@@ -1,4 +1,16 @@
+use std::path::PathBuf;
 use std::process::Command;
+
+/// Returns ~/.local/share/ghost-protocol/daemon-venv
+fn daemon_venv_dir() -> PathBuf {
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            PathBuf::from(home).join(".local/share")
+        });
+    base.join("ghost-protocol/daemon-venv")
+}
 
 /// Compare "major.minor" strings. Returns true if actual >= minimum.
 fn version_gte(actual: &str, minimum: &str) -> bool {
@@ -123,33 +135,36 @@ pub fn detect_tailscale_ip() -> Result<String, String> {
 
 #[tauri::command]
 pub fn install_daemon() -> Result<String, String> {
-    // Check if already installed
-    let check = Command::new("python3")
-        .args(["-c", "import ghost_protocol_daemon"])
-        .output();
-    if let Ok(output) = check {
-        if output.status.success() {
-            return Ok("already_installed".to_string());
+    let venv_dir = daemon_venv_dir();
+    let venv_python = venv_dir.join("bin/python3");
+
+    // Check if already installed in venv
+    if venv_python.exists() {
+        let check = Command::new(&venv_python)
+            .args(["-c", "import ghost_protocol_daemon"])
+            .output();
+        if let Ok(output) = check {
+            if output.status.success() {
+                return Ok("already_installed".to_string());
+            }
         }
     }
 
-    // Bootstrap pip if not available
-    let pip_check = Command::new("python3")
-        .args(["-c", "import pip"])
-        .output();
-    let pip_missing = pip_check.map(|o| !o.status.success()).unwrap_or(true);
-    if pip_missing {
-        let ensurepip = Command::new("python3")
-            .args(["-m", "ensurepip", "--default-pip"])
+    // Create venv if it doesn't exist (python3 -m venv always has pip)
+    if !venv_python.exists() {
+        let result = Command::new("python3")
+            .args(["-m", "venv", venv_dir.to_str().unwrap()])
             .output()
-            .map_err(|e| format!("install_failed:ensurepip:{}", e))?;
-        if !ensurepip.status.success() {
-            return Err("install_failed:pip not available — run: sudo pacman -S python-pip".to_string());
+            .map_err(|e| format!("install_failed:venv:{}", e))?;
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("install_failed:venv:{}", stderr.chars().take(200).collect::<String>()));
         }
     }
 
-    let output = Command::new("python3")
-        .args(["-m", "pip", "install", "--break-system-packages",
+    // Install into the venv
+    let output = Command::new(&venv_python)
+        .args(["-m", "pip", "install",
                "git+https://github.com/VmanHermes/ghost-protocol.git#subdirectory=backend"])
         .output()
         .map_err(|e| format!("install_failed:{}", e))?;
@@ -162,13 +177,19 @@ pub fn install_daemon() -> Result<String, String> {
 
 #[tauri::command]
 pub fn start_daemon(bind_host: String, port: u16) -> Result<String, String> {
+    let venv_python = daemon_venv_dir().join("bin/python3");
+    let python = if venv_python.exists() {
+        venv_python.to_str().unwrap().to_string()
+    } else {
+        "python3".to_string()
+    };
 
     // Spawn daemon as a detached process via setsid
     let bind = format!("{},127.0.0.1", bind_host);
     let cidrs = "100.64.0.0/10,fd7a:115c:a1e0::/48,127.0.0.1/32";
 
     let result = Command::new("setsid")
-        .args(["python3", "-m", "ghost_protocol_daemon"])
+        .args([&python, "-m", "ghost_protocol_daemon"])
         .env("GHOST_PROTOCOL_BIND_HOST", &bind)
         .env("GHOST_PROTOCOL_BIND_PORT", port.to_string())
         .env("GHOST_PROTOCOL_ALLOWED_CIDRS", cidrs)

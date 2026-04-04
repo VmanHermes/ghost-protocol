@@ -437,14 +437,26 @@ textarea { resize: vertical; }
 }
 
 /* Terminal tabs */
+.terminal-tab-bar {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
 .terminal-tabs {
   display: flex;
   align-items: center;
   gap: 0;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  padding: 0 0 0 20px;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
+}
+.terminal-tab-actions {
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 4px;
+  flex-shrink: 0;
 }
 .terminal-tab {
   display: inline-flex;
@@ -537,7 +549,7 @@ textarea { resize: vertical; }
 .terminal-add-menu {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   min-width: 200px;
   background: var(--bg-surface);
   border: 1px solid var(--border);

@@ -1,5 +1,6 @@
 pub mod sessions;
 pub mod chunks;
+pub mod hosts;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -16,8 +17,10 @@ impl Store {
         }
         let conn = Connection::open(db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        let migration = include_str!("../../migrations/001_initial.sql");
-        conn.execute_batch(migration)?;
+        let migration_001 = include_str!("../../migrations/001_initial.sql");
+        conn.execute_batch(migration_001)?;
+        let migration_002 = include_str!("../../migrations/002_known_hosts.sql");
+        conn.execute_batch(migration_002)?;
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
         })

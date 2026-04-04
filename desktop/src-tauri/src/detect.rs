@@ -133,8 +133,24 @@ pub fn install_daemon() -> Result<String, String> {
         }
     }
 
+    // Bootstrap pip if not available
+    let pip_check = Command::new("python3")
+        .args(["-c", "import pip"])
+        .output();
+    let pip_missing = pip_check.map(|o| !o.status.success()).unwrap_or(true);
+    if pip_missing {
+        let ensurepip = Command::new("python3")
+            .args(["-m", "ensurepip", "--default-pip"])
+            .output()
+            .map_err(|e| format!("install_failed:ensurepip:{}", e))?;
+        if !ensurepip.status.success() {
+            return Err("install_failed:pip not available — run: sudo pacman -S python-pip".to_string());
+        }
+    }
+
     let output = Command::new("python3")
-        .args(["-m", "pip", "install", "git+https://github.com/VmanHermes/ghost-protocol.git#subdirectory=backend"])
+        .args(["-m", "pip", "install", "--break-system-packages",
+               "git+https://github.com/VmanHermes/ghost-protocol.git#subdirectory=backend"])
         .output()
         .map_err(|e| format!("install_failed:{}", e))?;
     if !output.status.success() {

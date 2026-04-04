@@ -90,5 +90,17 @@ pub fn detect_tailscale() -> Result<String, String> {
 
 #[tauri::command]
 pub fn detect_daemon() -> Result<String, String> {
-    Err("not_implemented".to_string())
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| format!("not_running:{}", e))?;
+    let resp = client
+        .get("http://127.0.0.1:8787/health")
+        .send()
+        .map_err(|_| "not_running".to_string())?;
+    if resp.status().is_success() {
+        Ok("running".to_string())
+    } else {
+        Err("not_running".to_string())
+    }
 }

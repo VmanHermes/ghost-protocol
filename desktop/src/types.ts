@@ -148,7 +148,7 @@ export type MainView = "chat" | "terminal" | "logs" | "settings";
 
 export type LocalTerminalSession = {
   id: string;
-  status: "running" | "exited" | "terminated";
+  status: "running" | "exited" | "terminated" | "error";
   createdAt: string;
   exitCode?: number | null;
 };
@@ -161,4 +161,24 @@ export type TerminalTab = {
   source: TerminalSource;
   label: string;
   status: "running" | "exited" | "terminated" | "error" | "created";
+};
+
+// --- Multi-host types (Phase 2) ---
+
+export type SavedHost = {
+  id: string;
+  name: string;
+  url: string;
+};
+
+export type HostConnectionState = "idle" | "connecting" | "connected" | "error";
+
+export type HostConnection = {
+  host: SavedHost;
+  state: HostConnectionState;
+  message: string;
+  sessions: TerminalSession[] | null;
+  runs: RunRecord[] | null;
+  conversations: Conversation[] | null;
+  systemStatus: SystemStatus | null;
 };

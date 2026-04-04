@@ -10,7 +10,7 @@ type BackendLogEntry = {
 };
 
 type Props = {
-  baseUrl: string;
+  baseUrl: string | null;
 };
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
@@ -37,6 +37,7 @@ export function LogViewer({ baseUrl }: Props) {
 
   // Fetch server logs on mount and periodically
   const fetchServerLogs = useCallback(async () => {
+    if (!baseUrl) return;
     try {
       const data = await api<BackendLogEntry[]>(baseUrl, "/api/system/logs?limit=300");
       setServerLogs(data);
@@ -46,10 +47,11 @@ export function LogViewer({ baseUrl }: Props) {
   }, [baseUrl]);
 
   useEffect(() => {
+    if (!baseUrl) return;
     void fetchServerLogs();
     const timer = setInterval(() => void fetchServerLogs(), 5000);
     return () => clearInterval(timer);
-  }, [fetchServerLogs]);
+  }, [fetchServerLogs, baseUrl]);
 
   // Auto-scroll
   useEffect(() => {
@@ -86,6 +88,19 @@ export function LogViewer({ baseUrl }: Props) {
     a.download = `ghost-protocol-logs-${new Date().toISOString().slice(0, 19)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  if (!baseUrl) {
+    return (
+      <section className="log-viewer">
+        <div className="panel-header">
+          <h3>Logs</h3>
+        </div>
+        <div className="log-entries">
+          <div className="empty-state">No remote host connected — showing local logs only</div>
+        </div>
+      </section>
+    );
   }
 
   return (

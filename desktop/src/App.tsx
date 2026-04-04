@@ -348,12 +348,17 @@ function App() {
 
   const handleCreateRemoteSession = useCallback(async (hostId: string, mode: "agent" | "rescue_shell" | "project") => {
     const host = hosts.find((h) => h.id === hostId);
-    if (!host) return;
+    if (!host) {
+      appLog.error("session", `No host found for id=${hostId}`);
+      return;
+    }
+    appLog.info("session", `Creating ${mode} session on ${host.name} (${host.url})...`);
     try {
       const session = await api<TerminalSession>(host.url, "/api/terminal/sessions", {
         method: "POST",
         body: JSON.stringify({ mode }),
       });
+      appLog.info("session", `Session created: ${session.id} (${mode}) on ${host.name}`);
       setConnections((prev) => {
         const next = new Map(prev);
         const existing = prev.get(hostId);
@@ -365,7 +370,9 @@ function App() {
       setActiveTerminalSessionId(session.id);
       setMainView("terminal");
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Create session failed");
+      const msg = error instanceof Error ? error.message : String(error);
+      appLog.error("session", `Failed to create ${mode} session on ${host.name}: ${msg}`);
+      setActionError(msg);
     }
   }, [hosts]);
 

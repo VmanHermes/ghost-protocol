@@ -90,19 +90,6 @@ export function LogViewer({ baseUrl }: Props) {
     URL.revokeObjectURL(url);
   }
 
-  if (!baseUrl) {
-    return (
-      <section className="log-viewer">
-        <div className="panel-header">
-          <h3>Logs</h3>
-        </div>
-        <div className="log-entries">
-          <div className="empty-state">No remote host connected — showing local logs only</div>
-        </div>
-      </section>
-    );
-  }
-
   return (
     <section className="log-viewer">
       <div className="panel-header">
@@ -111,7 +98,7 @@ export function LogViewer({ baseUrl }: Props) {
           <select value={filter} onChange={(e) => setFilter(e.currentTarget.value as typeof filter)}>
             <option value="all">All</option>
             <option value="client">Client</option>
-            <option value="server">Server</option>
+            {baseUrl && <option value="server">Server</option>}
           </select>
           <select value={levelFilter} onChange={(e) => setLevelFilter(e.currentTarget.value as typeof levelFilter)}>
             <option value="all">All levels</option>

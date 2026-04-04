@@ -155,16 +155,17 @@ function App() {
     void loadHostData(activeHostId, activeHost.url);
   }, [activeHostId, activeHost, connections, loadHostData]);
 
-  // Health polling every 30s
+  // Health polling every 30s (ref keeps interval stable across host list changes)
+  const hostsRef = useRef(hosts);
+  useEffect(() => { hostsRef.current = hosts; }, [hosts]);
   useEffect(() => {
-    if (hosts.length === 0) return;
     const interval = setInterval(() => {
-      for (const host of hosts) {
+      for (const host of hostsRef.current) {
         void checkHostHealth(host);
       }
     }, 30000);
     return () => clearInterval(interval);
-  }, [hosts, checkHostHealth]);
+  }, [checkHostHealth]);
 
   // Reset per-host UI state when active host changes
   useEffect(() => {
@@ -328,15 +329,20 @@ function App() {
         method: "POST",
         body: JSON.stringify({ mode }),
       });
-      updateConnection(hostId, {
-        sessions: [...(connections.get(hostId)?.sessions ?? []), session],
+      setConnections((prev) => {
+        const next = new Map(prev);
+        const existing = prev.get(hostId);
+        if (existing) {
+          next.set(hostId, { ...existing, sessions: [...(existing.sessions ?? []), session] });
+        }
+        return next;
       });
       setActiveTerminalSessionId(session.id);
       setMainView("terminal");
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Create session failed");
     }
-  }, [hosts, connections, updateConnection]);
+  }, [hosts]);
 
   const handleRemoteSessionStatusChange = useCallback((_session: TerminalSession) => {
     if (!activeHostId || !activeHostUrl) return;
@@ -442,6 +448,15 @@ function App() {
   }, [hosts, checkHostHealth]);
 
   const handleRemoveHost = useCallback((hostId: string) => {
+    const host = hosts.find((h) => h.id === hostId);
+    const conn = connections.get(hostId);
+    // Terminate active sessions on this host
+    if (host && conn?.sessions) {
+      const active = conn.sessions.filter((s) => s.status === "created" || s.status === "running");
+      for (const session of active) {
+        void api(host.url, `/api/terminal/sessions/${session.id}/terminate`, { method: "POST" }).catch(() => {});
+      }
+    }
     const updated = persistRemoveHost(hosts, hostId);
     setHosts(updated);
     setConnections((prev) => {
@@ -449,7 +464,6 @@ function App() {
       next.delete(hostId);
       return next;
     });
-    const conn = connections.get(hostId);
     if (conn?.sessions?.some((s) => s.id === activeTerminalSessionId)) {
       setActiveTerminalSessionId(null);
     }

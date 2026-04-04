@@ -11,13 +11,9 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 VERSION="0.1.0"
 DIST_DIR="$ROOT_DIR/dist/ghost-protocol-$VERSION"
 
-echo "==> Building frontend..."
+echo "==> Building app (frontend + Rust)..."
 cd "$ROOT_DIR/desktop"
-npm run build
-
-echo "==> Building release binary..."
-cd "$ROOT_DIR/desktop/src-tauri"
-cargo build --release
+npx tauri build --bundles deb 2>&1 | tail -20
 
 echo "==> Packaging..."
 rm -rf "$DIST_DIR"

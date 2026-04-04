@@ -5,6 +5,7 @@ mod server;
 mod store;
 mod terminal;
 mod transport;
+mod hardware;
 
 use clap::Parser;
 use config::{Cli, Settings};

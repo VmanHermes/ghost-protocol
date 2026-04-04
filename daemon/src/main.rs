@@ -1,5 +1,7 @@
 // daemon/src/main.rs
 mod config;
+mod host;
+mod middleware;
 mod store;
 mod terminal;
 

@@ -35,6 +35,7 @@ function App() {
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null);
   const [localSessions, setLocalSessions] = useState<LocalTerminalSession[]>([]);
   const [actionError, setActionError] = useState("");
+  const [showSetupChecklist, setShowSetupChecklist] = useState(() => loadHosts().length === 0);
 
   // Per-active-host UI state
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -469,6 +470,14 @@ function App() {
     }
   }, [hosts, connections, activeTerminalSessionId]);
 
+  const handleHostDetected = useCallback((name: string, url: string) => {
+    const alreadyExists = hosts.some((h) => h.url === url);
+    if (!alreadyExists) {
+      handleAddHost(name, url);
+    }
+    setShowSetupChecklist(false);
+  }, [hosts, handleAddHost]);
+
   // --- Render ---
 
   // Build connections array for Sidebar
@@ -498,6 +507,8 @@ function App() {
         onChangeView={setMainView}
         onAddHost={handleAddHost}
         onRemoveHost={handleRemoveHost}
+        showSetupChecklist={showSetupChecklist}
+        onShowSetupChecklist={() => setShowSetupChecklist(true)}
       />
 
       <section className="main-panel">
@@ -541,6 +552,11 @@ function App() {
             onLocalSessionStatusChange={handleLocalSessionStatusChange}
             onKillRemoteSession={(id) => void handleKillRemoteSession(id)}
             onKillLocalSession={(id) => void handleKillLocalSession(id)}
+            setupChecklist={{
+              visible: showSetupChecklist,
+              onDismiss: () => setShowSetupChecklist(false),
+              onHostDetected: handleHostDetected,
+            }}
           />
         </div>
         <div style={{ display: mainView === "logs" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>

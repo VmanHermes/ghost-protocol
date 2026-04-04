@@ -7,6 +7,8 @@ type Props = {
   onChangeView: (view: MainView) => void;
   onAddHost: (name: string, url: string) => void;
   onRemoveHost: (hostId: string) => void;
+  showSetupChecklist: boolean;
+  onShowSetupChecklist: () => void;
 };
 
 const NAV_ITEMS: { view: MainView; label: string; icon: ReactNode }[] = [
@@ -60,6 +62,8 @@ export function Sidebar({
   onChangeView,
   onAddHost,
   onRemoveHost,
+  showSetupChecklist,
+  onShowSetupChecklist,
 }: Props) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -159,6 +163,14 @@ export function Sidebar({
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             Add host
+          </button>
+        )}
+        {!showSetupChecklist && (
+          <button
+            className="sidebar-setup-link"
+            onClick={onShowSetupChecklist}
+          >
+            Set up this computer
           </button>
         )}
       </div>

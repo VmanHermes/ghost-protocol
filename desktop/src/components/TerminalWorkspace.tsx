@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useTerminalSocket } from "../hooks/useTerminalSocket";
 import { useLocalTerminal } from "../hooks/useLocalTerminal";
 import type { HostConnection, LocalTerminalSession, SavedHost, TerminalSession } from "../types";
+import { SetupChecklist } from "./SetupChecklist";
 
 type RemoteSessionEntry = {
   hostId: string;
@@ -26,6 +27,11 @@ type Props = {
   onLocalSessionStatusChange: (session: LocalTerminalSession) => void;
   onKillRemoteSession: (sessionId: string) => void;
   onKillLocalSession: (sessionId: string) => void;
+  setupChecklist?: {
+    visible: boolean;
+    onDismiss: () => void;
+    onHostDetected: (name: string, url: string) => void;
+  };
 };
 
 function formatUptime(createdAt: string | null | undefined): string {
@@ -62,6 +68,7 @@ export function TerminalWorkspace({
   onLocalSessionStatusChange,
   onKillRemoteSession,
   onKillLocalSession,
+  setupChecklist,
 }: Props) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -315,6 +322,14 @@ export function TerminalWorkspace({
           </div>
         )}
       </div>
+
+      {setupChecklist && (
+        <SetupChecklist
+          visible={setupChecklist.visible}
+          onDismiss={setupChecklist.onDismiss}
+          onHostDetected={setupChecklist.onHostDetected}
+        />
+      )}
 
       {error ? <div className="error-banner">{error}</div> : null}
 

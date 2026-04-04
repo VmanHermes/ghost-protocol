@@ -24,7 +24,7 @@ rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
 # Binary
-cp "$ROOT_DIR/desktop/src-tauri/target/release/ghost_protocol" "$DIST_DIR/"
+cp "$ROOT_DIR/desktop/src-tauri/target/release/ghost_protocol" "$DIST_DIR/ghost-protocol"
 
 # Icon
 cp "$ROOT_DIR/desktop/src-tauri/icons/icon.png" "$DIST_DIR/ghost-protocol.png"

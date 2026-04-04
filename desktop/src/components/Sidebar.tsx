@@ -9,6 +9,11 @@ type Props = {
   onRemoveHost: (hostId: string) => void;
   showSetupChecklist: boolean;
   onShowSetupChecklist: () => void;
+  hostingStatus: "idle" | "starting" | "active" | "error";
+  hostingError: string | null;
+  hostingAddress: string | null;
+  onStartHosting: () => void;
+  onStopHosting: () => void;
 };
 
 const NAV_ITEMS: { view: MainView; label: string; icon: ReactNode }[] = [
@@ -64,6 +69,11 @@ export function Sidebar({
   onRemoveHost,
   showSetupChecklist,
   onShowSetupChecklist,
+  hostingStatus,
+  hostingError,
+  hostingAddress,
+  onStartHosting,
+  onStopHosting,
 }: Props) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -165,6 +175,63 @@ export function Sidebar({
             Add host
           </button>
         )}
+        {/* Hosting toggle */}
+        <div className="sidebar-hosting">
+          {hostingStatus === "idle" || hostingStatus === "error" ? (
+            <button className="sidebar-hosting-btn" onClick={onStartHosting}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              Host a connection
+            </button>
+          ) : hostingStatus === "starting" ? (
+            <button className="sidebar-hosting-btn disabled" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+              </svg>
+              Starting...
+            </button>
+          ) : (
+            <div className="sidebar-hosting-active">
+              <div className="sidebar-hosting-header">
+                <span className="sidebar-hosting-label">
+                  <span className="status-dot connected" />
+                  Hosting
+                </span>
+                <button className="sidebar-hosting-stop" onClick={onStopHosting} title="Stop hosting">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                  </svg>
+                </button>
+              </div>
+              {hostingAddress && (
+                <div className="sidebar-hosting-address">
+                  <code>{hostingAddress}</code>
+                  <button
+                    className="sidebar-hosting-copy"
+                    onClick={() => void navigator.clipboard.writeText(hostingAddress)}
+                    title="Copy address"
+                  >
+                    Copy
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {hostingStatus === "error" && hostingError && (
+            <div className="sidebar-hosting-error">
+              {hostingError}
+              {hostingError.includes("not installed") && (
+                <>
+                  {". "}
+                  <button className="sidebar-setup-link-inline" onClick={onShowSetupChecklist}>
+                    Set up this computer
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
         {!showSetupChecklist && (
           <button
             className="sidebar-setup-link"

@@ -36,6 +36,9 @@ function App() {
   const [localSessions, setLocalSessions] = useState<LocalTerminalSession[]>([]);
   const [actionError, setActionError] = useState("");
   const [showSetupChecklist, setShowSetupChecklist] = useState(() => loadHosts().length === 0);
+  const [hostingStatus, setHostingStatus] = useState<"idle" | "starting" | "active" | "error">("idle");
+  const [hostingError, setHostingError] = useState<string | null>(null);
+  const [hostingAddress, setHostingAddress] = useState<string | null>(null);
 
   // Per-active-host UI state
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -138,6 +141,25 @@ function App() {
   // Initialize hosts on mount
   useEffect(() => {
     initializeHosts(hosts);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Restore hosting state on launch
+  useEffect(() => {
+    (async () => {
+      try {
+        await invoke<string>("detect_daemon");
+        // Daemon is running — check if Tailscale is connected
+        try {
+          const ip = await invoke<string>("detect_tailscale_ip");
+          setHostingStatus("active");
+          setHostingAddress(`${ip}:8787`);
+        } catch {
+          // Daemon running but no Tailscale — started manually, stay idle
+        }
+      } catch {
+        // No daemon running — stay idle
+      }
+    })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-spawn a local terminal on first mount
@@ -478,6 +500,70 @@ function App() {
     setShowSetupChecklist(false);
   }, [hosts, handleAddHost]);
 
+  const handleStartHosting = useCallback(async () => {
+    setHostingStatus("starting");
+    setHostingError(null);
+
+    // 1. Check Tailscale
+    let tailscaleIp: string;
+    try {
+      tailscaleIp = await invoke<string>("detect_tailscale_ip");
+    } catch {
+      setHostingStatus("error");
+      setHostingError("Tailscale not connected to a mesh");
+      return;
+    }
+
+    // 2. Start daemon
+    try {
+      await invoke<string>("start_daemon", { bindHost: tailscaleIp, port: 8787 });
+    } catch (err) {
+      const msg = String(err ?? "");
+      setHostingStatus("error");
+      if (msg.includes("not_installed")) {
+        setHostingError("Daemon not installed");
+      } else {
+        setHostingError(`Failed to start daemon: ${msg}`);
+      }
+      return;
+    }
+
+    // 3. Poll for health (up to 10 seconds)
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        await invoke<string>("detect_daemon");
+        // Success — daemon is running
+        setHostingStatus("active");
+        setHostingAddress(`${tailscaleIp}:8787`);
+        // Auto-add localhost if not already present
+        const alreadyExists = hosts.some((h) => h.url === "http://127.0.0.1:8787");
+        if (!alreadyExists) {
+          handleAddHost("This Computer", "http://127.0.0.1:8787");
+        }
+        return;
+      } catch {
+        // Not ready yet, keep polling
+      }
+    }
+
+    // Timeout — daemon failed to start
+    setHostingStatus("error");
+    setHostingError("Daemon failed to start (timed out)");
+    try { await invoke("stop_daemon"); } catch { /* ignore */ }
+  }, [hosts, handleAddHost]);
+
+  const handleStopHosting = useCallback(async () => {
+    try {
+      await invoke("stop_daemon");
+    } catch {
+      // Ignore — may already be stopped
+    }
+    setHostingStatus("idle");
+    setHostingAddress(null);
+    setHostingError(null);
+  }, []);
+
   // --- Render ---
 
   // Build connections array for Sidebar
@@ -509,6 +595,11 @@ function App() {
         onRemoveHost={handleRemoveHost}
         showSetupChecklist={showSetupChecklist}
         onShowSetupChecklist={() => setShowSetupChecklist(true)}
+        hostingStatus={hostingStatus}
+        hostingError={hostingError}
+        hostingAddress={hostingAddress}
+        onStartHosting={() => void handleStartHosting()}
+        onStopHosting={() => void handleStopHosting()}
       />
 
       <section className="main-panel">

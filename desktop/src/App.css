@@ -1134,3 +1134,114 @@ textarea { resize: vertical; }
 .sidebar-setup-link:hover {
   color: var(--accent-blue);
 }
+
+/* ─── Sidebar hosting ─── */
+.sidebar-hosting {
+  padding: 4px 0;
+}
+.sidebar-hosting-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.sidebar-hosting-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.sidebar-hosting-btn.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sidebar-hosting-btn.disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.sidebar-hosting-active {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+.sidebar-hosting-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sidebar-hosting-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-green);
+}
+.sidebar-hosting-stop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.sidebar-hosting-stop:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--accent-red);
+}
+.sidebar-hosting-address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.sidebar-hosting-address code {
+  flex: 1;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+}
+.sidebar-hosting-copy {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.sidebar-hosting-copy:hover {
+  background: var(--bg-input);
+  color: var(--text-secondary);
+}
+.sidebar-hosting-error {
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  color: var(--accent-red);
+}
+.sidebar-setup-link-inline {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-blue);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.sidebar-setup-link-inline:hover {
+  color: var(--text-primary);
+}

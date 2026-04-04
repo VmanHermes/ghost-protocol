@@ -608,10 +608,14 @@ textarea { resize: vertical; }
 .terminal-host {
   flex: 1;
   min-height: 0;
-  padding: 8px 12px;
+  padding: 0;
   overflow: hidden;
 }
-.terminal-host .xterm { height: 100%; }
+.terminal-host .xterm {
+  height: 100%;
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
 .terminal-host .xterm-viewport,
 .terminal-host .xterm-screen { border-radius: 0; }
 

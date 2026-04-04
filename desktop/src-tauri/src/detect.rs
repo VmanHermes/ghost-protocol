@@ -122,15 +122,30 @@ pub fn detect_tailscale_ip() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn start_daemon(bind_host: String, port: u16) -> Result<String, String> {
-    // Pre-check: is the daemon package installed?
+pub fn install_daemon() -> Result<String, String> {
+    // Check if already installed
     let check = Command::new("python3")
         .args(["-c", "import ghost_protocol_daemon"])
-        .output()
-        .map_err(|_| "not_installed".to_string())?;
-    if !check.status.success() {
-        return Err("not_installed".to_string());
+        .output();
+    if let Ok(output) = check {
+        if output.status.success() {
+            return Ok("already_installed".to_string());
+        }
     }
+
+    let output = Command::new("python3")
+        .args(["-m", "pip", "install", "git+https://github.com/VmanHermes/ghost-protocol.git#subdirectory=backend"])
+        .output()
+        .map_err(|e| format!("install_failed:{}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("install_failed:{}", stderr.chars().take(200).collect::<String>()));
+    }
+    Ok("installed".to_string())
+}
+
+#[tauri::command]
+pub fn start_daemon(bind_host: String, port: u16) -> Result<String, String> {
 
     // Spawn daemon as a detached process via setsid
     let bind = format!("{},127.0.0.1", bind_host);

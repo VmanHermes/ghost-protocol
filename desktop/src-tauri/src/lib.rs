@@ -49,6 +49,7 @@ pub fn run() {
             detect::detect_platform,
             detect::detect_package_manager,
             detect::detect_tailscale_ip,
+            detect::install_daemon,
             detect::start_daemon,
             detect::stop_daemon,
         ])

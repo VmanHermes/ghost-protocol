@@ -514,17 +514,22 @@ function App() {
       return;
     }
 
-    // 2. Start daemon
+    // 2. Install daemon if needed, then start
+    try {
+      await invoke<string>("install_daemon");
+    } catch (err) {
+      const msg = String(err ?? "");
+      setHostingStatus("error");
+      setHostingError(`Failed to install daemon: ${msg}`);
+      return;
+    }
+
     try {
       await invoke<string>("start_daemon", { bindHost: tailscaleIp, port: 8787 });
     } catch (err) {
       const msg = String(err ?? "");
       setHostingStatus("error");
-      if (msg.includes("not_installed")) {
-        setHostingError("Daemon not installed");
-      } else {
-        setHostingError(`Failed to start daemon: ${msg}`);
-      }
+      setHostingError(`Failed to start daemon: ${msg}`);
       return;
     }
 

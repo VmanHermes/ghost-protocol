@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="0.1.0"
+VERSION="0.1.1"
 DIST_DIR="$ROOT_DIR/dist/ghost-protocol-$VERSION"
 
 echo "==> Building app (frontend + Rust)..."

@@ -1,4 +1,5 @@
 mod pty;
+mod detect;
 
 use pty::PtyManager;
 use tauri::State;
@@ -40,7 +41,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(PtyManager::new())
         .invoke_handler(tauri::generate_handler![
-            pty_spawn, pty_write, pty_resize, pty_kill
+            pty_spawn, pty_write, pty_resize, pty_kill,
+            detect::detect_python,
+            detect::detect_tmux,
+            detect::detect_tailscale,
+            detect::detect_daemon,
+            detect::detect_platform,
+            detect::detect_package_manager,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,11 +1,12 @@
-import { ReactNode } from "react";
-import type { MainView } from "../types";
+import { ReactNode, useState } from "react";
+import type { HostConnection, MainView } from "../types";
 
 type Props = {
-  connectionState: "idle" | "connecting" | "connected" | "error";
-  connectionMessage: string;
+  hosts: HostConnection[];
   mainView: MainView;
   onChangeView: (view: MainView) => void;
+  onAddHost: (name: string, url: string) => void;
+  onRemoveHost: (hostId: string) => void;
 };
 
 const NAV_ITEMS: { view: MainView; label: string; icon: ReactNode }[] = [
@@ -54,11 +55,27 @@ const NAV_ITEMS: { view: MainView; label: string; icon: ReactNode }[] = [
 ];
 
 export function Sidebar({
-  connectionState,
-  connectionMessage,
+  hosts,
   mainView,
   onChangeView,
+  onAddHost,
+  onRemoveHost,
 }: Props) {
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftUrl, setDraftUrl] = useState("http://");
+
+  const handleSubmitHost = () => {
+    const name = draftName.trim();
+    const url = draftUrl.trim();
+    if (!name || !url) return;
+    if (!url.startsWith("http://") && !url.startsWith("https://")) return;
+    onAddHost(name, url);
+    setDraftName("");
+    setDraftUrl("http://");
+    setShowAddForm(false);
+  };
+
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -90,9 +107,60 @@ export function Sidebar({
 
       <div className="sidebar-spacer" />
 
-      <div className="sidebar-connection">
-        <span className={`status-dot ${connectionState}`} />
-        <span>{connectionMessage}</span>
+      <div className="sidebar-hosts">
+        <div className="sidebar-hosts-header">Hosts</div>
+        {hosts.length === 0 && !showAddForm && (
+          <div className="sidebar-hosts-empty">Add a remote host to connect</div>
+        )}
+        {hosts.map((conn) => (
+          <div key={conn.host.id} className="sidebar-host-row">
+            <span className={`status-dot ${conn.state}`} />
+            <span className="sidebar-host-name">{conn.host.name}</span>
+            <span className="sidebar-host-status">
+              {conn.state === "connected" ? "connected" : conn.state === "connecting" ? "connecting" : "unreachable"}
+            </span>
+            <button
+              className="sidebar-host-remove"
+              onClick={() => onRemoveHost(conn.host.id)}
+              title="Remove host"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        ))}
+
+        {showAddForm ? (
+          <div className="sidebar-add-host-form">
+            <input
+              className="sidebar-add-host-input"
+              placeholder="Host name"
+              value={draftName}
+              onChange={(e) => setDraftName(e.currentTarget.value)}
+              autoFocus
+            />
+            <input
+              className="sidebar-add-host-input"
+              placeholder="http://host:port"
+              value={draftUrl}
+              onChange={(e) => setDraftUrl(e.currentTarget.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSubmitHost(); }}
+            />
+            <div className="sidebar-add-host-actions">
+              <button className="btn-primary sidebar-add-host-btn" onClick={handleSubmitHost}>Connect</button>
+              <button className="btn-secondary sidebar-add-host-btn" onClick={() => setShowAddForm(false)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button className="sidebar-add-host-toggle" onClick={() => setShowAddForm(true)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Add host
+          </button>
+        )}
       </div>
 
       <div className="sidebar-user">

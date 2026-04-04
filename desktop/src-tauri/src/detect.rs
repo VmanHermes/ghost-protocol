@@ -33,17 +33,59 @@ pub fn detect_package_manager() -> Result<String, String> {
 
 #[tauri::command]
 pub fn detect_python() -> Result<String, String> {
-    Err("not_implemented".to_string())
+    let output = Command::new("python3")
+        .arg("--version")
+        .output()
+        .map_err(|_| "not_found".to_string())?;
+    if !output.status.success() {
+        return Err("not_found".to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout.trim().strip_prefix("Python ").unwrap_or(stdout.trim());
+    if version_gte(version, "3.10") {
+        Ok(version.to_string())
+    } else {
+        Err(format!("version_too_old:{}", version))
+    }
 }
 
 #[tauri::command]
 pub fn detect_tmux() -> Result<String, String> {
-    Err("not_implemented".to_string())
+    let output = Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map_err(|_| "not_found".to_string())?;
+    if !output.status.success() {
+        return Err("not_found".to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout.trim().strip_prefix("tmux ").unwrap_or(stdout.trim());
+    if version_gte(version, "3.0") {
+        Ok(version.to_string())
+    } else {
+        Err(format!("version_too_old:{}", version))
+    }
 }
 
 #[tauri::command]
 pub fn detect_tailscale() -> Result<String, String> {
-    Err("not_implemented".to_string())
+    let output = Command::new("tailscale")
+        .arg("version")
+        .output()
+        .map_err(|_| "not_found".to_string())?;
+    if !output.status.success() {
+        return Err("not_found".to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout.lines().next().unwrap_or("").trim().to_string();
+    if version.is_empty() {
+        return Err("not_found".to_string());
+    }
+    if version_gte(&version, "1.0") {
+        Ok(version)
+    } else {
+        Err(format!("version_too_old:{}", version))
+    }
 }
 
 #[tauri::command]

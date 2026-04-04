@@ -29,61 +29,59 @@ The desktop app and backend daemon are functional for multi-machine terminal sha
 
 ---
 
-## Phase 2: Chat + Terminal convergence
+## Phase 1 (complete): The Interface
 
-**Goal:** Restore the AI chat interface and make it work alongside shared terminals.
+Terminal sharing, local PTY, multi-host connections over Tailscale.
 
-### 2a: Chat sessions (next)
-
-- Wire ChatView component to backend conversation + message APIs
-- Real-time message streaming via WebSocket
-- Conversation list in sidebar (create, switch, delete)
-- Messages persist in backend event store
-
-### 2b: Terminal ↔ Chat sync
-
-- Link a terminal session to a conversation — agent can see terminal output, user can see agent actions
-- Agent commands execute in the linked terminal
-- Shared context: both local and remote clients see the same chat + terminal state
-
-### 2c: Multi-client chat
-
-- Multiple clients connected to the same host see the same conversation in real time
-- Presence indicators (who's connected)
-- Input from any client is visible to all
+(See "What works" section above for details.)
 
 ---
 
-## Phase 3: Observability + remote control
+## Phase 2 (current): The Context Layer
 
-**Goal:** Visibility into what's actually running across machines.
+**Goal:** Make the mesh legible to AI agents so they can understand the network and act directly.
 
-### 3a: Task observability
+### 2a: MCP resource server
 
-- Dashboard showing active agent runs, tool executions, and their status
-- Works for both local and remote hosts
-- History of completed tasks with duration, outcome, and logs
+- Each daemon exposes an MCP server (JSON-RPC over stdio)
+- Resources: machine/info, machine/status, network/hosts, terminal/sessions, agent/hints, context/briefing
+- Dynamic agent briefing generated from live data
 
-### 3b: code-server integration
+### 2b: CLI tools
 
-- Open a code-server instance on the remote host from a link below the terminal
-- Allows full IDE access to the remote machine's workspace
+- `ghost-protocol-daemon status` — one-line machine summary
+- `ghost-protocol-daemon sessions` — terminal session list
+- `ghost-protocol-daemon hosts` — known network peers
+- `ghost-protocol-daemon info` — full machine profile as JSON
+- All commands support `--json` flag for agent consumption
 
-### 3c: Remote desktop / screenshot
+### 2c: Host registry
 
-- Command to take a screenshot of the remote machine's display
-- Stretch: lightweight remote desktop view (VNC/RDP over Tailscale)
+- Host list migrated from frontend localStorage to daemon SQLite
+- Background health polling between daemons (30s interval)
+- Capabilities auto-discovered from peer hardware endpoints
 
 ---
 
-## Phase 4: iPhone support
+## Phase 3: Mobile + Polish
 
-**Goal:** Join connections from iPhone.
+**Goal:** iPhone support and chat interface.
 
 - Native iOS app or responsive web client
-- Read-only terminal view at minimum, interactive stretch goal
-- Chat interface works fully
-- Push notifications for agent events (task complete, approval needed)
+- Approve/deny UI for agent-gated tasks
+- Push notifications for agent events
+- Chat interface wired to Hermes
+- Remote screenshots
+
+---
+
+## Phase 4: Deep Performance
+
+**Goal:** Evaluate and add optimizations based on real usage patterns.
+
+- Task queues for inference offloading (if needed)
+- Advanced sandboxing for work/casual environment isolation
+- Storage optimization (if large dataset access becomes a bottleneck)
 
 ---
 

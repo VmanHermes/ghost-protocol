@@ -14,6 +14,9 @@ from .contracts import (
     MessageRecord,
     RunAttemptRecord,
     RunRecord,
+    TerminalChunkRecord,
+    TerminalSessionMode,
+    TerminalSessionRecord,
     UsageRecord,
 )
 from .db import Database
@@ -371,6 +374,110 @@ class HermesStore:
             rows = conn.execute('SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at ASC', (run_id,)).fetchall()
         return [ArtifactRecord(id=row['id'], runId=row['run_id'], type=row['type'], path=row['path'], mimeType=row['mime_type'], size=row['size'], sha256=row['sha256'], metadata=json.loads(row['metadata_json']), sourceEventId=row['source_event_id'], createdAt=row['created_at']) for row in rows]
 
+
+
+    def create_terminal_session(self, *, mode: TerminalSessionMode, name: str | None, workdir: str, command: list[str]) -> TerminalSessionRecord:
+        session_id = str(uuid4())
+        ts = now_iso()
+        with self.db.connection() as conn:
+            conn.execute(
+                'INSERT INTO terminal_sessions (id, mode, status, name, workdir, command_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (session_id, mode, 'created', name, workdir, json.dumps(command, ensure_ascii=False), ts),
+            )
+        return TerminalSessionRecord(id=session_id, mode=mode, status='created', name=name, workdir=workdir, command=command, createdAt=ts)
+
+    def update_terminal_session(self, session_id: str, **fields: Any) -> None:
+        allowed = {
+            'status': 'status',
+            'startedAt': 'started_at',
+            'finishedAt': 'finished_at',
+            'lastChunkAt': 'last_chunk_at',
+            'pid': 'pid',
+            'exitCode': 'exit_code',
+            'name': 'name',
+            'workdir': 'workdir',
+            'command': 'command_json',
+        }
+        updates = []
+        values = []
+        for key, column in allowed.items():
+            if key in fields:
+                updates.append(f'{column} = ?')
+                value = fields[key]
+                if key == 'command':
+                    value = json.dumps(value, ensure_ascii=False)
+                values.append(value)
+        if not updates:
+            return
+        with self.db.connection() as conn:
+            conn.execute(f"UPDATE terminal_sessions SET {', '.join(updates)} WHERE id = ?", (*values, session_id))
+
+    def terminate_incomplete_terminal_sessions(self) -> None:
+        ts = now_iso()
+        with self.db.connection() as conn:
+            conn.execute(
+                "UPDATE terminal_sessions SET status = 'terminated', finished_at = COALESCE(finished_at, ?) WHERE status IN ('created', 'running')",
+                (ts,),
+            )
+
+    def get_terminal_session(self, session_id: str) -> TerminalSessionRecord | None:
+        with self.db.connection() as conn:
+            row = conn.execute('SELECT * FROM terminal_sessions WHERE id = ?', (session_id,)).fetchone()
+        if not row:
+            return None
+        return self._terminal_session_from_row(row)
+
+    def list_terminal_sessions(self) -> list[TerminalSessionRecord]:
+        with self.db.connection() as conn:
+            rows = conn.execute('SELECT * FROM terminal_sessions ORDER BY created_at DESC').fetchall()
+        return [self._terminal_session_from_row(row) for row in rows]
+
+    def _terminal_session_from_row(self, row) -> TerminalSessionRecord:
+        return TerminalSessionRecord(
+            id=row['id'],
+            mode=row['mode'],
+            status=row['status'],
+            name=row['name'],
+            workdir=row['workdir'],
+            command=json.loads(row['command_json']),
+            createdAt=row['created_at'],
+            startedAt=row['started_at'],
+            finishedAt=row['finished_at'],
+            lastChunkAt=row['last_chunk_at'],
+            pid=row['pid'],
+            exitCode=row['exit_code'],
+        )
+
+    def append_terminal_chunk(self, session_id: str, stream: str, chunk: str) -> TerminalChunkRecord:
+        ts = now_iso()
+        with self.db.connection() as conn:
+            cursor = conn.execute(
+                'INSERT INTO terminal_chunks (session_id, stream, chunk, created_at) VALUES (?, ?, ?, ?)',
+                (session_id, stream, chunk, ts),
+            )
+            conn.execute('UPDATE terminal_sessions SET last_chunk_at = ? WHERE id = ?', (ts, session_id))
+        return TerminalChunkRecord(id=int(cursor.lastrowid), sessionId=session_id, stream=stream, chunk=chunk, createdAt=ts)
+
+    def list_terminal_chunks(self, session_id: str, *, after_chunk_id: int = 0, limit: int = 500) -> list[TerminalChunkRecord]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                'SELECT * FROM terminal_chunks WHERE session_id = ? AND id > ? ORDER BY id ASC LIMIT ?',
+                (session_id, after_chunk_id, limit),
+            ).fetchall()
+        return [
+            TerminalChunkRecord(id=row['id'], sessionId=row['session_id'], stream=row['stream'], chunk=row['chunk'], createdAt=row['created_at'])
+            for row in rows
+        ]
+
+    def get_terminal_session_detail(self, session_id: str) -> dict[str, Any] | None:
+        session = self.get_terminal_session(session_id)
+        if not session:
+            return None
+        return {
+            'session': session.model_dump(),
+            'chunks': [item.model_dump() for item in self.list_terminal_chunks(session_id)],
+        }
+
     def get_conversation_detail(self, conversation_id: str) -> dict[str, Any] | None:
         conversation = self.get_conversation(conversation_id)
         if not conversation:
@@ -402,4 +509,5 @@ class HermesStore:
             'activeAgents': [item.model_dump() for item in self.list_agents(active_only=True)],
             'pendingApprovals': [item.model_dump() for item in self.list_pending_approvals()],
             'recentRuns': [item.model_dump() for item in self.list_runs()[:10]],
+            'activeTerminalSessions': [item.model_dump() for item in self.list_terminal_sessions() if item.status == 'running'],
         }

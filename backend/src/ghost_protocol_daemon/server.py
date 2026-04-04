@@ -3,17 +3,79 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
+import logging.handlers
+from collections import deque
 
 from aiohttp import WSMsgType, web
 from dotenv import load_dotenv
 
 from .config import Settings
-from .contracts import EventEnvelope, PingRequest, SubscriptionRequest
+from .contracts import EventEnvelope, PingRequest, SubscriptionRequest, TerminalSubscriptionRequest
 from .db import Database
 from .events import EventBus, EventSubscription
 from .runtime import HermesRuntimeAdapter
-from .store import HermesStore
+from .store import HermesStore, now_iso
 from .telegram_bridge import TelegramBridge
+from .terminal_sessions import RemoteSessionManager, TerminalSessionSubscription
+
+log = logging.getLogger('ghost_protocol')
+
+
+class InMemoryLogHandler(logging.Handler):
+    """Ring buffer handler that keeps the last N log records for the /api/system/logs endpoint."""
+
+    def __init__(self, capacity: int = 500):
+        super().__init__()
+        self._buffer: deque[dict] = deque(maxlen=capacity)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._buffer.append({
+            'ts': now_iso(),
+            'level': record.levelname,
+            'logger': record.name,
+            'message': self.format(record),
+        })
+
+    def entries(self, limit: int = 200, level: str | None = None) -> list[dict]:
+        items = list(self._buffer)
+        if level:
+            items = [e for e in items if e['level'] == level.upper()]
+        return items[-limit:]
+
+
+_memory_handler = InMemoryLogHandler(capacity=1000)
+
+
+def setup_logging(settings: Settings) -> None:
+    settings.log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = settings.log_dir / 'daemon.log'
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    fmt = logging.Formatter('%(asctime)s %(levelname)-5s [%(name)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+    # File handler — rotates at 5 MB, keeps 3 backups
+    fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3)
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+    # Stderr handler
+    sh = logging.StreamHandler()
+    sh.setLevel(logging.INFO)
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+
+    # In-memory handler for API
+    _memory_handler.setLevel(logging.DEBUG)
+    _memory_handler.setFormatter(fmt)
+    root.addHandler(_memory_handler)
+
+    # Quiet noisy libraries
+    logging.getLogger('aiohttp').setLevel(logging.WARNING)
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 
 def _apply_cors(request: web.Request, response: web.StreamResponse) -> web.StreamResponse:
@@ -48,13 +110,25 @@ async def tailscale_only_middleware(request: web.Request, handler):
 async def cors_middleware(request: web.Request, handler):
     if request.method == 'OPTIONS':
         return _apply_cors(request, web.Response(status=204))
-    response = await handler(request)
+    try:
+        response = await handler(request)
+    except web.HTTPException as exc:
+        response = exc
+    except Exception as exc:
+        log.exception('Unhandled error in %s %s', request.method, request.path)
+        response = web.json_response({'error': 'internal_error', 'message': str(exc)}, status=500)
     return _apply_cors(request, response)
 
 
 async def health(request: web.Request) -> web.Response:
     settings: Settings = request.app['settings']
     return web.json_response({'ok': True, 'telegramEnabled': settings.telegram_enabled})
+
+
+async def system_logs(request: web.Request) -> web.Response:
+    limit = int(request.query.get('limit', '200'))
+    level = request.query.get('level')
+    return web.json_response(_memory_handler.entries(limit=limit, level=level))
 
 
 async def system_status(request: web.Request) -> web.Response:
@@ -207,18 +281,87 @@ async def _forward_events(ws: web.WebSocketResponse, subscription: EventSubscrip
         await ws.send_json({'op': 'event', 'event': event})
 
 
+async def _forward_terminal_messages(ws: web.WebSocketResponse, subscription: TerminalSessionSubscription) -> None:
+    while True:
+        message = await subscription.queue.get()
+        await ws.send_json(message)
+
+
+async def list_terminal_sessions(request: web.Request) -> web.Response:
+    store: HermesStore = request.app['store']
+    return web.json_response([item.model_dump() for item in store.list_terminal_sessions()])
+
+
+async def create_terminal_session(request: web.Request) -> web.Response:
+    manager: RemoteSessionManager = request.app['remote_sessions']
+    payload = await request.json() if request.can_read_body else {}
+    session = await manager.create_session(
+        mode=payload.get('mode', 'agent'),
+        name=payload.get('name'),
+        workdir=payload.get('workdir'),
+    )
+    return web.json_response(session.model_dump(), status=201)
+
+
+async def get_terminal_session(request: web.Request) -> web.Response:
+    manager: RemoteSessionManager = request.app['remote_sessions']
+    store: HermesStore = request.app['store']
+    await manager.ensure_session_attached(request.match_info['session_id'])
+    detail = store.get_terminal_session_detail(request.match_info['session_id'])
+    if not detail:
+        raise web.HTTPNotFound(text='terminal session not found')
+    return web.json_response(detail)
+
+
+async def post_terminal_input(request: web.Request) -> web.Response:
+    manager: RemoteSessionManager = request.app['remote_sessions']
+    payload = await request.json()
+    await manager.send_input(
+        request.match_info['session_id'],
+        payload.get('input', ''),
+        append_newline=payload.get('appendNewline', True),
+    )
+    return web.json_response({'ok': True})
+
+
+async def resize_terminal_session(request: web.Request) -> web.Response:
+    manager: RemoteSessionManager = request.app['remote_sessions']
+    payload = await request.json()
+    session = await manager.resize_session(
+        request.match_info['session_id'],
+        cols=int(payload.get('cols', 120)),
+        rows=int(payload.get('rows', 32)),
+    )
+    return web.json_response(session.model_dump())
+
+
+async def terminate_terminal_session(request: web.Request) -> web.Response:
+    manager: RemoteSessionManager = request.app['remote_sessions']
+    session = await manager.terminate_session(request.match_info['session_id'])
+    return web.json_response(session.model_dump())
+
+
 async def websocket_handler(request: web.Request) -> web.StreamResponse:
+    client_ip = _client_ip(request)
     store: HermesStore = request.app['store']
     bus: EventBus = request.app['bus']
+    remote_sessions: RemoteSessionManager = request.app['remote_sessions']
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
-    await ws.send_json({'op': 'hello', 'message': 'Hermes Desktop daemon connected'})
+    log.info('WS connected from %s', client_ip)
+    await ws.send_json({'op': 'hello', 'message': 'Ghost Protocol daemon connected'})
     subscription = None
+    terminal_subscription = None
     forward_task: asyncio.Task | None = None
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                payload = json.loads(msg.data)
+                try:
+                    payload = json.loads(msg.data)
+                except json.JSONDecodeError:
+                    log.warning('WS %s: invalid JSON received', client_ip)
+                    await ws.send_json({'op': 'error', 'message': 'invalid JSON'})
+                    continue
                 op = payload.get('op')
                 if op == 'ping':
                     parsed = PingRequest.model_validate(payload)
@@ -227,6 +370,9 @@ async def websocket_handler(request: web.Request) -> web.StreamResponse:
                     parsed = SubscriptionRequest.model_validate(payload)
                     if subscription is not None:
                         await bus.unsubscribe(subscription)
+                    if terminal_subscription is not None:
+                        await remote_sessions.unsubscribe(terminal_subscription)
+                        terminal_subscription = None
                     if forward_task is not None:
                         forward_task.cancel()
                     subscription = await bus.subscribe(parsed.conversationId, parsed.runId)
@@ -235,15 +381,79 @@ async def websocket_handler(request: web.Request) -> web.StreamResponse:
                     for event in replay:
                         await ws.send_json({'op': 'event', 'event': event})
                     forward_task = asyncio.create_task(_forward_events(ws, subscription))
+                elif op == 'subscribe_terminal':
+                    parsed = TerminalSubscriptionRequest.model_validate(payload)
+                    log.info('WS %s: subscribe_terminal session=%s', client_ip, parsed.sessionId[:8])
+                    if subscription is not None:
+                        await bus.unsubscribe(subscription)
+                        subscription = None
+                    if terminal_subscription is not None:
+                        await remote_sessions.unsubscribe(terminal_subscription)
+                    if forward_task is not None:
+                        forward_task.cancel()
+                    try:
+                        await remote_sessions.ensure_session_attached(parsed.sessionId)
+                    except Exception:
+                        log.exception('WS %s: failed to attach session %s', client_ip, parsed.sessionId[:8])
+                        await ws.send_json({'op': 'error', 'message': f'failed to attach terminal session {parsed.sessionId[:8]}'})
+                        continue
+                    terminal_subscription = await remote_sessions.subscribe(parsed.sessionId)
+                    replay = [item.model_dump() for item in store.list_terminal_chunks(parsed.sessionId, after_chunk_id=parsed.afterChunkId or 0)]
+                    detail = store.get_terminal_session_detail(parsed.sessionId)
+                    log.info('WS %s: terminal subscribed, replaying %d chunks', client_ip, len(replay))
+                    await ws.send_json({'op': 'subscribed_terminal', 'sessionId': parsed.sessionId, 'replayed': len(replay), 'session': detail['session'] if detail else None})
+                    for chunk in replay:
+                        await ws.send_json({'op': 'terminal_chunk', 'chunk': chunk})
+                    forward_task = asyncio.create_task(_forward_terminal_messages(ws, terminal_subscription))
+                elif op == 'terminal_input':
+                    session_id = payload.get('sessionId')
+                    if not session_id:
+                        await ws.send_json({'op': 'error', 'message': 'sessionId is required for terminal_input'})
+                        continue
+                    await remote_sessions.send_input(
+                        session_id,
+                        payload.get('input', ''),
+                        append_newline=bool(payload.get('appendNewline', False)),
+                    )
+                elif op == 'resize_terminal':
+                    session_id = payload.get('sessionId')
+                    if not session_id:
+                        await ws.send_json({'op': 'error', 'message': 'sessionId is required for resize_terminal'})
+                        continue
+                    session = await remote_sessions.resize_session(
+                        session_id,
+                        cols=int(payload.get('cols', 120)),
+                        rows=int(payload.get('rows', 32)),
+                    )
+                    await ws.send_json({'op': 'terminal_status', 'session': session.model_dump()})
+                elif op == 'interrupt_terminal':
+                    session_id = payload.get('sessionId')
+                    if not session_id:
+                        await ws.send_json({'op': 'error', 'message': 'sessionId is required for interrupt_terminal'})
+                        continue
+                    await remote_sessions.send_input(session_id, '\u0003', append_newline=False)
+                elif op == 'terminate_terminal':
+                    session_id = payload.get('sessionId')
+                    if not session_id:
+                        await ws.send_json({'op': 'error', 'message': 'sessionId is required for terminate_terminal'})
+                        continue
+                    session = await remote_sessions.terminate_session(session_id)
+                    await ws.send_json({'op': 'terminal_status', 'session': session.model_dump()})
                 else:
                     await ws.send_json({'op': 'error', 'message': f'unsupported op: {op}'})
             elif msg.type == WSMsgType.ERROR:
+                log.warning('WS %s: received error frame', client_ip)
                 break
+    except Exception:
+        log.exception('WS %s: unhandled error in message loop', client_ip)
     finally:
+        log.info('WS %s: disconnected', client_ip)
         if forward_task is not None:
             forward_task.cancel()
         if subscription is not None:
             await bus.unsubscribe(subscription)
+        if terminal_subscription is not None:
+            await remote_sessions.unsubscribe(terminal_subscription)
     return ws
 
 
@@ -254,6 +464,7 @@ async def create_app() -> web.Application:
     store = HermesStore(db)
     bus = EventBus(store)
     runtime = HermesRuntimeAdapter(settings, store, bus)
+    remote_sessions = RemoteSessionManager(settings, store)
     telegram_bridge = TelegramBridge(settings, bus, store, runtime)
     allowed_networks = [ipaddress.ip_network(item, strict=False) for item in settings.allowed_cidrs]
     app = web.Application(middlewares=[cors_middleware, tailscale_only_middleware])
@@ -262,11 +473,16 @@ async def create_app() -> web.Application:
     app['store'] = store
     app['bus'] = bus
     app['runtime'] = runtime
+    app['remote_sessions'] = remote_sessions
     app['telegram_bridge'] = telegram_bridge
     app['allowed_networks'] = allowed_networks
 
     async def on_startup(app_: web.Application) -> None:
+        log.info('Daemon startup: recovering sessions, starting bridges')
+        app_['remote_sessions'].bind_loop(asyncio.get_running_loop())
+        app_['remote_sessions'].recover_existing_sessions()
         await app_['telegram_bridge'].start()
+        log.info('Daemon startup complete')
 
     async def on_cleanup(app_: web.Application) -> None:
         await app_['telegram_bridge'].stop()
@@ -276,6 +492,7 @@ async def create_app() -> web.Application:
     app.add_routes([
         web.get('/health', health),
         web.get('/api/system/status', system_status),
+        web.get('/api/system/logs', system_logs),
         web.get('/api/conversations', list_conversations),
         web.post('/api/conversations', create_conversation),
         web.get('/api/conversations/{conversation_id}', get_conversation),
@@ -290,6 +507,12 @@ async def create_app() -> web.Application:
         web.get('/api/approvals', list_approvals),
         web.post('/api/approvals/{approval_id}/resolve', resolve_approval),
         web.get('/api/runs/{run_id}/artifacts', list_artifacts),
+        web.get('/api/terminal/sessions', list_terminal_sessions),
+        web.post('/api/terminal/sessions', create_terminal_session),
+        web.get('/api/terminal/sessions/{session_id}', get_terminal_session),
+        web.post('/api/terminal/sessions/{session_id}/input', post_terminal_input),
+        web.post('/api/terminal/sessions/{session_id}/resize', resize_terminal_session),
+        web.post('/api/terminal/sessions/{session_id}/terminate', terminate_terminal_session),
         web.get('/ws', websocket_handler),
     ])
     return app
@@ -298,6 +521,8 @@ async def create_app() -> web.Application:
 def main() -> None:
     load_dotenv()
     settings = Settings.load()
+    setup_logging(settings)
+    log.info('Ghost Protocol daemon starting on %s:%s', settings.bind_host, settings.bind_port)
     web.run_app(create_app(), host=settings.bind_host, port=settings.bind_port)
 
 

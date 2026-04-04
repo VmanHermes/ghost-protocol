@@ -29,6 +29,7 @@ class Settings:
     telegram_bot_token: str | None
     telegram_chat_id: str | None
     telegram_enabled: bool
+    log_dir: Path
 
     @classmethod
     def load(cls) -> 'Settings':
@@ -51,4 +52,5 @@ class Settings:
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
             telegram_enabled=telegram_enabled,
+            log_dir=Path(_first_env('GHOST_PROTOCOL_LOG_DIR', default=str(db_path.parent / 'logs'))),
         )

@@ -11,6 +11,9 @@ RunStatus = Literal['pending', 'running', 'waiting', 'done', 'error', 'cancelled
 ApprovalStatus = Literal['pending', 'approved', 'rejected', 'expired']
 StepType = Literal['llm', 'tool', 'decision', 'approval', 'system']
 ArtifactType = Literal['file', 'screenshot', 'patch', 'report', 'log']
+TerminalSessionMode = Literal['agent', 'project', 'rescue_shell']
+TerminalSessionStatus = Literal['created', 'running', 'exited', 'terminated', 'error']
+TerminalStream = Literal['stdout', 'stderr', 'system']
 
 
 class EventEnvelope(BaseModel):
@@ -130,12 +133,41 @@ class UsageRecord(BaseModel):
     createdAt: str
 
 
+class TerminalSessionRecord(BaseModel):
+    id: str
+    mode: TerminalSessionMode
+    status: TerminalSessionStatus
+    name: str | None = None
+    workdir: str
+    command: list[str]
+    createdAt: str
+    startedAt: str | None = None
+    finishedAt: str | None = None
+    lastChunkAt: str | None = None
+    pid: int | None = None
+    exitCode: int | None = None
+
+
+class TerminalChunkRecord(BaseModel):
+    id: int
+    sessionId: str
+    stream: TerminalStream
+    chunk: str
+    createdAt: str
+
+
 class SubscriptionRequest(BaseModel):
     op: Literal['subscribe']
     conversationId: str | None = None
     runId: str | None = None
     afterSeq: int | None = None
     lastEventId: str | None = None
+
+
+class TerminalSubscriptionRequest(BaseModel):
+    op: Literal['subscribe_terminal']
+    sessionId: str
+    afterChunkId: int | None = None
 
 
 class PingRequest(BaseModel):

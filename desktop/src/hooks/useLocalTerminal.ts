@@ -10,6 +10,7 @@ const SRC = "local-pty";
 export type UseLocalTerminalOptions = {
   sessionId: string | null;
   terminalRef: React.RefObject<Terminal | null>;
+  isActive: boolean;
   onSessionStatusChange?: (session: LocalTerminalSession) => void;
   onError?: (message: string) => void;
 };
@@ -36,6 +37,7 @@ type PtyStatusPayload = {
 export function useLocalTerminal({
   sessionId,
   terminalRef,
+  isActive,
   onSessionStatusChange,
   onError,
 }: UseLocalTerminalOptions): UseLocalTerminalReturn {
@@ -43,6 +45,7 @@ export function useLocalTerminal({
   const onStatusChangeRef = useRef(onSessionStatusChange);
   const onErrorRef = useRef(onError);
   const chunkBufferRef = useRef<string[]>([]);
+  const isActiveRef = useRef(isActive);
 
   const [sessionMeta, setSessionMeta] = useState<LocalTerminalSession | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -50,16 +53,18 @@ export function useLocalTerminal({
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { onStatusChangeRef.current = onSessionStatusChange; }, [onSessionStatusChange]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
 
   // Flush buffered chunks when terminal becomes available
   useEffect(() => {
+    if (!isActive) return;
     const terminal = terminalRef.current;
     if (!terminal || chunkBufferRef.current.length === 0) return;
     for (const data of chunkBufferRef.current) {
       terminal.write(data);
     }
     chunkBufferRef.current = [];
-  }, [terminalRef]);
+  }, [terminalRef, isActive]);
 
   // Main event listener lifecycle
   useEffect(() => {
@@ -75,8 +80,10 @@ export function useLocalTerminal({
     appLog.info(SRC, `Attaching to PTY session ${currentSessionId.slice(0, 8)}`);
 
     // Reset terminal for fresh session
-    const terminal = terminalRef.current;
-    if (terminal) terminal.reset();
+    if (isActiveRef.current) {
+      const terminal = terminalRef.current;
+      if (terminal) terminal.reset();
+    }
     chunkBufferRef.current = [];
 
     const sessionCreatedAt = new Date().toISOString();
@@ -90,11 +97,13 @@ export function useLocalTerminal({
     // Listen for pty:chunk events
     const chunkUnlisten = listen<PtyChunkPayload>("pty:chunk", (event) => {
       if (cancelled || event.payload.session_id !== currentSessionId) return;
-      const term = terminalRef.current;
-      if (term) {
-        term.write(event.payload.data);
-      } else {
-        chunkBufferRef.current.push(event.payload.data);
+      if (isActiveRef.current) {
+        const term = terminalRef.current;
+        if (term) {
+          term.write(event.payload.data);
+        } else {
+          chunkBufferRef.current.push(event.payload.data);
+        }
       }
     });
 

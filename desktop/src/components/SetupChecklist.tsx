@@ -21,6 +21,7 @@ const INITIAL_CHECKS: CheckItem[] = [
   { name: "Python", key: "python", status: "pending", version: null, minVersion: "3.10" },
   { name: "tmux", key: "tmux", status: "pending", version: null, minVersion: "3.0" },
   { name: "Tailscale", key: "tailscale", status: "pending", version: null, minVersion: "1.0" },
+  { name: "Tailscale mesh", key: "tailscale_mesh", status: "pending", version: null, minVersion: "" },
   { name: "Daemon", key: "daemon", status: "pending", version: null, minVersion: "" },
 ];
 
@@ -49,6 +50,10 @@ function getInstallCommands(packageManager: string): InstallCommands {
       pacman: "sudo pacman -S tailscale",
       brew: "brew install tailscale",
       unknown: "curl -fsSL https://tailscale.com/install.sh | sh",
+    },
+    tailscale_mesh: {
+      [pm]: "sudo systemctl enable --now tailscaled && sudo tailscale up",
+      unknown: "sudo systemctl enable --now tailscaled && sudo tailscale up",
     },
     daemon: {
       [pm]: "pip install ghost-protocol-daemon && ghost-protocol-daemon",
@@ -86,10 +91,11 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
 
     const results: CheckItem[] = [...INITIAL_CHECKS];
 
-    const [pythonResult, tmuxResult, tailscaleResult, daemonResult] = await Promise.allSettled([
+    const [pythonResult, tmuxResult, tailscaleResult, tailscaleMeshResult, daemonResult] = await Promise.allSettled([
       invoke<string>("detect_python"),
       invoke<string>("detect_tmux"),
       invoke<string>("detect_tailscale"),
+      invoke<string>("detect_tailscale_ip"),
       invoke<string>("detect_daemon"),
     ]);
 
@@ -113,11 +119,12 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
     processResult(0, pythonResult);
     processResult(1, tmuxResult);
     processResult(2, tailscaleResult);
-    processResult(3, daemonResult);
+    processResult(3, tailscaleMeshResult);
+    processResult(4, daemonResult);
 
     setChecks(results);
 
-    if (results[3].status === "ok" && !hostDetectedRef.current) {
+    if (results[4].status === "ok" && !hostDetectedRef.current) {
       hostDetectedRef.current = true;
       onHostDetected("This Computer", "http://127.0.0.1:8787");
     }
@@ -175,7 +182,9 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
           <div className="setup-checklist-message">
             {activeItem.status === "too_old"
               ? `${activeItem.name} ${activeItem.version} is installed but version ${activeItem.minVersion}+ is required.`
-              : `${activeItem.name} is not installed.`}
+              : activeItem.key === "tailscale_mesh"
+                ? "Tailscale is installed but not connected to a mesh. Start the service, then log in via the browser link."
+                : `${activeItem.name} is not installed.`}
           </div>
           {(() => {
             const cmd = getCommand(installCommands, activeItem.key, packageManager);

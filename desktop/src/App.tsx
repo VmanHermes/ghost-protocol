@@ -96,9 +96,11 @@ function App() {
     try {
       const health = await api<{ ok: boolean; telegramEnabled?: boolean }>(host.url, "/health");
       const msg = health.telegramEnabled ? "Connected · Telegram on" : "Connected";
+      appLog.info("health", `${host.name} (${host.url}): ${msg}`);
       updateConnection(host.id, { state: "connected", message: msg });
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Connection failed";
+      appLog.warn("health", `${host.name} (${host.url}): ${msg}`);
       updateConnection(host.id, { state: "error", message: msg });
     }
   }, [updateConnection]);
@@ -501,6 +503,7 @@ function App() {
   }, [hosts, handleAddHost]);
 
   const handleStartHosting = useCallback(async () => {
+    appLog.info("hosting", "Starting host flow...");
     setHostingStatus("starting");
     setHostingError(null);
 
@@ -508,7 +511,9 @@ function App() {
     let tailscaleIp: string;
     try {
       tailscaleIp = await invoke<string>("detect_tailscale_ip");
+      appLog.info("hosting", `Tailscale IP: ${tailscaleIp}`);
     } catch {
+      appLog.error("hosting", "Tailscale not connected to a mesh");
       setHostingStatus("error");
       setHostingError("Tailscale not connected to a mesh");
       return;
@@ -516,9 +521,12 @@ function App() {
 
     // 2. Install daemon if needed, then start
     try {
-      await invoke<string>("install_daemon");
+      appLog.info("hosting", "Checking daemon installation...");
+      const installResult = await invoke<string>("install_daemon");
+      appLog.info("hosting", `Daemon install: ${installResult}`);
     } catch (err) {
       const msg = String(err ?? "");
+      appLog.error("hosting", `Failed to install daemon: ${msg}`);
       setHostingStatus("error");
       setHostingError(`Failed to install daemon: ${msg}`);
       return;
@@ -526,8 +534,10 @@ function App() {
 
     try {
       await invoke<string>("start_daemon", { bindHost: tailscaleIp, port: 8787 });
+      appLog.info("hosting", `Daemon spawned, binding to ${tailscaleIp}:8787`);
     } catch (err) {
       const msg = String(err ?? "");
+      appLog.error("hosting", `Failed to start daemon: ${msg}`);
       setHostingStatus("error");
       setHostingError(`Failed to start daemon: ${msg}`);
       return;
@@ -538,29 +548,31 @@ function App() {
       await new Promise((r) => setTimeout(r, 1000));
       try {
         await invoke<string>("detect_daemon");
-        // Success — daemon is running
+        appLog.info("hosting", `Daemon healthy after ${i + 1}s — now hosting on ${tailscaleIp}:8787`);
         setHostingStatus("active");
         setHostingAddress(`${tailscaleIp}:8787`);
-        // Auto-add localhost if not already present
         const alreadyExists = hosts.some((h) => h.url === "http://127.0.0.1:8787");
         if (!alreadyExists) {
           handleAddHost("This Computer", "http://127.0.0.1:8787");
         }
         return;
       } catch {
-        // Not ready yet, keep polling
+        appLog.debug("hosting", `Health poll ${i + 1}/10 — not ready`);
       }
     }
 
     // Timeout — daemon failed to start
+    appLog.error("hosting", "Daemon failed to start (timed out after 10s)");
     setHostingStatus("error");
     setHostingError("Daemon failed to start (timed out)");
     try { await invoke("stop_daemon"); } catch { /* ignore */ }
   }, [hosts, handleAddHost]);
 
   const handleStopHosting = useCallback(async () => {
+    appLog.info("hosting", "Stopping daemon...");
     try {
       await invoke("stop_daemon");
+      appLog.info("hosting", "Daemon stopped");
     } catch {
       // Ignore — may already be stopped
     }

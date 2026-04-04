@@ -18,3 +18,4 @@ desktop/node_modules/
 desktop/src-tauri/target/
 desktop/dist/
 logs/
+dist/

@@ -8,28 +8,58 @@ use clap::Parser;
 #[command(name = "ghost-protocol-daemon", about = "Ghost Protocol terminal daemon")]
 pub struct Cli {
     /// Bind address (comma-separated for multiple interfaces)
-    #[arg(long, env = "GHOST_PROTOCOL_BIND_HOST", default_value = "127.0.0.1")]
+    #[arg(long, env = "GHOST_PROTOCOL_BIND_HOST", default_value = "127.0.0.1", global = true)]
     pub bind_host: String,
 
     /// Bind port
-    #[arg(long, env = "GHOST_PROTOCOL_BIND_PORT", default_value_t = 8787)]
+    #[arg(long, env = "GHOST_PROTOCOL_BIND_PORT", default_value_t = 8787, global = true)]
     pub bind_port: u16,
 
     /// Allowed CIDRs (comma-separated)
     #[arg(
         long,
         env = "GHOST_PROTOCOL_ALLOWED_CIDRS",
-        default_value = "100.64.0.0/10,fd7a:115c:a1e0::/48,127.0.0.1/32"
+        default_value = "100.64.0.0/10,fd7a:115c:a1e0::/48,127.0.0.1/32",
+        global = true
     )]
     pub allowed_cidrs: String,
 
     /// Database path
-    #[arg(long, env = "GHOST_PROTOCOL_DB", default_value = "./data/ghost_protocol.db")]
+    #[arg(long, env = "GHOST_PROTOCOL_DB", default_value = "./data/ghost_protocol.db", global = true)]
     pub db_path: PathBuf,
 
     /// Log directory
-    #[arg(long, env = "GHOST_PROTOCOL_LOG_DIR")]
+    #[arg(long, env = "GHOST_PROTOCOL_LOG_DIR", global = true)]
     pub log_dir: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Option<CliCommand>,
+}
+
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum CliCommand {
+    /// Show one-line machine status
+    Status {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List terminal sessions
+    Sessions {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List known network hosts
+    Hosts {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show full machine info as JSON
+    Info,
+    /// Start the daemon server (default)
+    Serve,
 }
 
 #[derive(Clone)]
@@ -90,6 +120,7 @@ mod tests {
             allowed_cidrs: "100.64.0.0/10,127.0.0.1/32".into(),
             db_path: PathBuf::from("./data/test.db"),
             log_dir: None,
+            command: None,
         })
         .unwrap();
 
@@ -106,6 +137,7 @@ mod tests {
             allowed_cidrs: "127.0.0.1/32".into(),
             db_path: PathBuf::from("./data/test.db"),
             log_dir: None,
+            command: None,
         })
         .unwrap();
 

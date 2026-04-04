@@ -1,5 +1,3 @@
-export const defaultBaseUrl = localStorage.getItem("ghost-protocol.baseUrl") ?? "http://127.0.0.1:8787";
-
 export function wsUrlFromHttp(baseUrl: string) {
   if (baseUrl.startsWith("https://")) return baseUrl.replace("https://", "wss://") + "/ws";
   if (baseUrl.startsWith("http://")) return baseUrl.replace("http://", "ws://") + "/ws";

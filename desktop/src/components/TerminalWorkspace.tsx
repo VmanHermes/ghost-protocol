@@ -188,7 +188,8 @@ export function TerminalWorkspace({
       convertEol: false,
       fontFamily: 'SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
       fontSize: 14,
-      letterSpacing: 0,
+      letterSpacing: -1,
+      lineHeight: 1.0,
       theme: {
         background: "#1a1f36",
         foreground: "#e2e8f0",

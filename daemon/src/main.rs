@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod mcp;
 mod hardware;
 mod host;
 mod middleware;
@@ -35,6 +36,12 @@ async fn main() {
 
             if let Err(e) = server::run(settings).await {
                 tracing::error!(error = %e, "daemon exited with error");
+                std::process::exit(1);
+            }
+        }
+        Some(CliCommand::Mcp) => {
+            if let Err(e) = mcp::transport::run_stdio(cli.bind_port).await {
+                eprintln!("MCP server error: {e}");
                 std::process::exit(1);
             }
         }

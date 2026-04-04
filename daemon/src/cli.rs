@@ -12,6 +12,7 @@ pub async fn run(command: CliCommand, port: u16) -> Result<(), Box<dyn std::erro
         CliCommand::Hosts { json } => cmd_hosts(&client, &base, json).await,
         CliCommand::Info => cmd_info(&client, &base).await,
         CliCommand::Serve => unreachable!("serve is handled in main"),
+        CliCommand::Mcp => unreachable!("mcp is handled in main"),
     }
 }
 

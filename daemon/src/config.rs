@@ -60,6 +60,8 @@ pub enum CliCommand {
     Info,
     /// Start the daemon server (default)
     Serve,
+    /// Start MCP resource server over stdio (for Claude Code integration)
+    Mcp,
 }
 
 #[derive(Clone)]

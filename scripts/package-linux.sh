@@ -30,7 +30,7 @@ cat > "$DIST_DIR/ghost-protocol.desktop" << 'DESKTOP'
 [Desktop Entry]
 Name=Ghost Protocol
 Comment=Developer Console
-Exec=/usr/local/bin/ghost-protocol
+Exec=env WEBKIT_DISABLE_COMPOSITING_MODE=1 GDK_BACKEND=x11 /usr/local/bin/ghost-protocol
 Icon=/usr/local/share/icons/ghost-protocol.png
 Terminal=false
 Type=Application

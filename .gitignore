@@ -19,3 +19,6 @@ desktop/src-tauri/target/
 desktop/dist/
 logs/
 dist/
+
+# Rust / daemon
+daemon/target/

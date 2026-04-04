@@ -512,6 +512,24 @@ textarea { resize: vertical; }
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
+.terminal-remote-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  margin-left: 2px;
+}
+.terminal-remote-add:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
 .terminal-add-wrapper {
   position: relative;
   display: inline-flex;

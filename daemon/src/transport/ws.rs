@@ -1,16 +1,40 @@
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{State, WebSocketUpgrade};
+use axum::extract::{FromRequestParts, State, WebSocketUpgrade};
+use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use chrono::Utc;
 use serde::Deserialize;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
+use crate::middleware::permissions::PeerTier;
 use crate::store::chunks::TerminalChunkRecord;
 use crate::terminal::broadcaster::SessionBroadcaster;
 use super::http::AppState;
+
+// ---------------------------------------------------------------------------
+// PeerTier extractor
+// ---------------------------------------------------------------------------
+
+pub(crate) struct ExtractedTier(PeerTier);
+
+impl<S> FromRequestParts<S> for ExtractedTier
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let tier = parts
+            .extensions
+            .get::<PeerTier>()
+            .copied()
+            .unwrap_or(PeerTier::NoAccess);
+        Ok(ExtractedTier(tier))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Incoming message shape
@@ -41,16 +65,22 @@ struct WsMessage {
 
 pub async fn ws_upgrade(
     State(state): State<AppState>,
+    ExtractedTier(tier): ExtractedTier,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
+    ws.on_upgrade(move |socket| handle_ws(socket, state, tier))
 }
 
 // ---------------------------------------------------------------------------
 // Main WebSocket loop
 // ---------------------------------------------------------------------------
 
-async fn handle_ws(mut socket: WebSocket, state: AppState) {
+async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
+    if tier == PeerTier::NoAccess {
+        let _ = send_error(&mut socket, "no-access: WebSocket connection denied").await;
+        return;
+    }
+
     let mut broadcast_rx: Option<broadcast::Receiver<TerminalChunkRecord>> = None;
     let mut current_session_id: Option<String> = None;
     let mut current_broadcaster: Option<Arc<SessionBroadcaster>> = None;
@@ -111,6 +141,7 @@ async fn handle_ws(mut socket: WebSocket, state: AppState) {
                                     &mut broadcast_rx,
                                     &mut current_session_id,
                                     &mut current_broadcaster,
+                                    tier,
                                 ).await.is_err() {
                                     break;
                                 }
@@ -151,6 +182,7 @@ async fn handle_op(
     broadcast_rx: &mut Option<broadcast::Receiver<TerminalChunkRecord>>,
     current_session_id: &mut Option<String>,
     current_broadcaster: &mut Option<Arc<SessionBroadcaster>>,
+    tier: PeerTier,
 ) -> Result<(), ()> {
     match msg.op.as_str() {
         "ping" => {
@@ -224,6 +256,9 @@ async fn handle_op(
         }
 
         "terminal_input" => {
+            if tier < PeerTier::FullAccess {
+                return send_error(socket, "write operations require full-access tier").await;
+            }
             let Some(session_id) = msg.session_id else {
                 return send_error(socket, "terminal_input requires sessionId").await;
             };
@@ -243,6 +278,9 @@ async fn handle_op(
         }
 
         "resize_terminal" => {
+            if tier < PeerTier::FullAccess {
+                return send_error(socket, "write operations require full-access tier").await;
+            }
             let Some(session_id) = msg.session_id else {
                 return send_error(socket, "resize_terminal requires sessionId").await;
             };
@@ -263,6 +301,9 @@ async fn handle_op(
         }
 
         "interrupt_terminal" => {
+            if tier < PeerTier::FullAccess {
+                return send_error(socket, "write operations require full-access tier").await;
+            }
             let Some(session_id) = msg.session_id else {
                 return send_error(socket, "interrupt_terminal requires sessionId").await;
             };
@@ -273,6 +314,9 @@ async fn handle_op(
         }
 
         "terminate_terminal" => {
+            if tier < PeerTier::FullAccess {
+                return send_error(socket, "write operations require full-access tier").await;
+            }
             let Some(session_id) = msg.session_id else {
                 return send_error(socket, "terminate_terminal requires sessionId").await;
             };

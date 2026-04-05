@@ -1,9 +1,11 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::host::logs::LogBuffer;
+use crate::middleware::permissions::{PeerTier, RequireFullAccess, RequireLocalhostOnly, RequireReadOnly};
+use crate::store::permissions::{PeerPermission, PendingApproval};
 use crate::store::Store;
 use crate::terminal::manager::TerminalManager;
 
@@ -333,6 +335,364 @@ pub async fn remove_host(
     state
         .store
         .remove_known_host(&id)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/permissions  (localhost-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionWithHost {
+    pub host_id: String,
+    pub host_name: String,
+    pub tailscale_ip: String,
+    pub tier: String,
+    pub updated_at: String,
+}
+
+pub async fn list_permissions(
+    _: RequireLocalhostOnly,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PermissionWithHost>>, (StatusCode, Json<serde_json::Value>)> {
+    let hosts = state.store.list_known_hosts().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("db error: {e}") })),
+        )
+    })?;
+
+    let permissions = state.store.list_peer_permissions().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("db error: {e}") })),
+        )
+    })?;
+
+    // Build a lookup map from host_id -> PeerPermission
+    let perm_map: std::collections::HashMap<String, PeerPermission> = permissions
+        .into_iter()
+        .map(|p| (p.host_id.clone(), p))
+        .collect();
+
+    let result: Vec<PermissionWithHost> = hosts
+        .into_iter()
+        .map(|h| {
+            let (tier, updated_at) = perm_map
+                .get(&h.id)
+                .map(|p| (p.tier.clone(), p.updated_at.clone()))
+                .unwrap_or_else(|| ("no-access".to_string(), String::new()));
+            PermissionWithHost {
+                host_id: h.id,
+                host_name: h.name,
+                tailscale_ip: h.tailscale_ip,
+                tier,
+                updated_at,
+            }
+        })
+        .collect();
+
+    Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/hosts/{id}/permissions  (localhost-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct SetPermissionBody {
+    pub tier: String,
+}
+
+pub async fn set_permission(
+    _: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SetPermissionBody>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    let valid_tiers = ["full-access", "approval-required", "read-only", "no-access"];
+    if !valid_tiers.contains(&body.tier.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!(
+                    "invalid tier '{}'; must be one of: {}",
+                    body.tier,
+                    valid_tiers.join(", ")
+                )
+            })),
+        ));
+    }
+
+    state
+        .store
+        .set_peer_permission(&id, &body.tier)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/approvals  (localhost-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ApprovalsQuery {
+    pub status: Option<String>,
+}
+
+pub async fn list_approvals(
+    _: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Query(params): Query<ApprovalsQuery>,
+) -> Result<Json<Vec<PendingApproval>>, (StatusCode, Json<serde_json::Value>)> {
+    state
+        .store
+        .list_approvals(params.status.as_deref())
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/approvals/{id}  (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn get_approval(
+    _: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<PendingApproval>, (StatusCode, Json<serde_json::Value>)> {
+    state
+        .store
+        .get_approval(&id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("approval {id} not found") })),
+            )
+        })
+        .map(Json)
+}
+
+// ---------------------------------------------------------------------------
+// replay_request helper
+// ---------------------------------------------------------------------------
+
+async fn replay_request(
+    state: &AppState,
+    method: &str,
+    path: &str,
+    body_json: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    // Segment the path to match patterns
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+
+    match (method, segments.as_slice()) {
+        // POST /api/terminal/sessions
+        ("POST", ["api", "terminal", "sessions"]) => {
+            let body: CreateSessionBody = body_json
+                .and_then(|b| serde_json::from_str(b).ok())
+                .unwrap_or_else(|| CreateSessionBody {
+                    mode: default_mode(),
+                    name: None,
+                    workdir: default_workdir(),
+                });
+            let rec = state
+                .manager
+                .create_session(&body.mode, body.name.as_deref(), &body.workdir)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(rec).map_err(|e| e.to_string())
+        }
+
+        // POST /api/terminal/sessions/{id}/input
+        ("POST", ["api", "terminal", "sessions", id, "input"]) => {
+            let body: InputBody = body_json
+                .and_then(|b| serde_json::from_str(b).ok())
+                .ok_or("missing or invalid input body")?;
+            state
+                .manager
+                .send_input(id, body.input.as_bytes(), body.append_newline)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({}))
+        }
+
+        // POST /api/terminal/sessions/{id}/resize
+        ("POST", ["api", "terminal", "sessions", id, "resize"]) => {
+            let body: ResizeBody = body_json
+                .and_then(|b| serde_json::from_str(b).ok())
+                .ok_or("missing or invalid resize body")?;
+            let rec = state
+                .manager
+                .resize_session(id, body.cols, body.rows)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(rec).map_err(|e| e.to_string())
+        }
+
+        // POST /api/terminal/sessions/{id}/terminate
+        ("POST", ["api", "terminal", "sessions", id, "terminate"]) => {
+            let rec = state
+                .manager
+                .terminate_session(id)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(rec).map_err(|e| e.to_string())
+        }
+
+        // POST /api/hosts
+        ("POST", ["api", "hosts"]) => {
+            let body: AddHostBody = body_json
+                .and_then(|b| serde_json::from_str(b).ok())
+                .ok_or("missing or invalid host body")?;
+            let id = uuid::Uuid::new_v4().to_string();
+            let url = format!("http://{}:8787", body.tailscale_ip);
+            let host = state
+                .store
+                .add_known_host(&id, &body.name, &body.tailscale_ip, &url)
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(host).map_err(|e| e.to_string())
+        }
+
+        // DELETE /api/hosts/{id}
+        ("DELETE", ["api", "hosts", id]) => {
+            state
+                .store
+                .remove_known_host(id)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({}))
+        }
+
+        _ => Err(format!("no handler for {method} {path}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/approvals/{id}/approve  (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn approve_approval(
+    _: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let approval = state
+        .store
+        .get_approval(&id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("approval {id} not found") })),
+            )
+        })?;
+
+    if approval.status != "pending" {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!("approval is already '{}'", approval.status)
+            })),
+        ));
+    }
+
+    let result = replay_request(
+        &state,
+        &approval.method,
+        &approval.path,
+        approval.body_json.as_deref(),
+    )
+    .await;
+
+    let (result_json, result_value) = match result {
+        Ok(val) => (
+            serde_json::to_string(&val).ok(),
+            val,
+        ),
+        Err(err) => {
+            let err_val = serde_json::json!({ "error": err });
+            (serde_json::to_string(&err_val).ok(), err_val)
+        }
+    };
+
+    state
+        .store
+        .resolve_approval(&id, "approved", result_json.as_deref())
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({ "result": result_value })))
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/approvals/{id}/deny  (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn deny_approval(
+    _: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    let approval = state
+        .store
+        .get_approval(&id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("approval {id} not found") })),
+            )
+        })?;
+
+    if approval.status != "pending" {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!("approval is already '{}'", approval.status)
+            })),
+        ));
+    }
+
+    state
+        .store
+        .resolve_approval(&id, "denied", None)
         .map(|_| StatusCode::NO_CONTENT)
         .map_err(|e| {
             (

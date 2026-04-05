@@ -66,7 +66,22 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // 6. Build app state (health poller already spawned above)
+    // 6. Spawn approval expiry background task
+    {
+        let store = store.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if let Ok(count) = store.expire_stale_approvals() {
+                    if count > 0 {
+                        tracing::debug!(expired = count, "expired stale approvals");
+                    }
+                }
+            }
+        });
+    }
+
+    // 7. Build app state
     let state = AppState {
         store,
         manager,
@@ -79,7 +94,7 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
             .collect(),
     };
 
-    // 7. Build router
+    // 8. Build router
     let store_for_guard = state.store.clone();
     let app = Router::new()
         .route("/health", get(http::health))
@@ -107,12 +122,18 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/hosts", get(http::list_hosts).post(http::add_host))
         .route("/api/hosts/{id}", axum::routing::delete(http::remove_host))
         .route("/ws", get(ws::ws_upgrade))
+        .route("/api/permissions", get(http::list_permissions))
+        .route("/api/hosts/{id}/permissions", axum::routing::put(http::set_permission))
+        .route("/api/approvals", get(http::list_approvals))
+        .route("/api/approvals/{id}", get(http::get_approval))
+        .route("/api/approvals/{id}/approve", axum::routing::put(http::approve_approval))
+        .route("/api/approvals/{id}/deny", axum::routing::put(http::deny_approval))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
         .layer(middleware::from_fn_with_state(store_for_guard, tailscale_guard))
         .layer(Extension(Arc::new(settings.clone())));
 
-    // 8. Bind to all configured hosts
+    // 9. Bind to all configured hosts
     let mut handles = Vec::new();
 
     for host in &settings.bind_hosts {

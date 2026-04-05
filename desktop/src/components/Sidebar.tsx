@@ -1,19 +1,15 @@
 import { ReactNode, useState } from "react";
-import type { HostConnection, MainView } from "../types";
+import type { DiscoveredPeer, HostConnection, MainView } from "../types";
 
 type Props = {
   hosts: HostConnection[];
+  discoveries: DiscoveredPeer[];
   mainView: MainView;
   onChangeView: (view: MainView) => void;
   onAddHost: (name: string, url: string) => void;
   onRemoveHost: (hostId: string) => void;
-  showSetupChecklist: boolean;
-  onShowSetupChecklist: () => void;
-  hostingStatus: "idle" | "starting" | "active" | "error";
-  hostingError: string | null;
-  hostingAddress: string | null;
-  onStartHosting: () => void;
-  onStopHosting: () => void;
+  onAcceptDiscovery: (ip: string) => void;
+  onDismissDiscovery: (ip: string) => void;
 };
 
 const NAV_ITEMS: { view: MainView; label: string; icon: ReactNode }[] = [
@@ -63,17 +59,13 @@ const NAV_ITEMS: { view: MainView; label: string; icon: ReactNode }[] = [
 
 export function Sidebar({
   hosts,
+  discoveries,
   mainView,
   onChangeView,
   onAddHost,
   onRemoveHost,
-  showSetupChecklist,
-  onShowSetupChecklist,
-  hostingStatus,
-  hostingError,
-  hostingAddress,
-  onStartHosting,
-  onStopHosting,
+  onAcceptDiscovery,
+  onDismissDiscovery,
 }: Props) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -89,6 +81,11 @@ export function Sidebar({
     setDraftUrl("http://");
     setShowAddForm(false);
   };
+
+  const sortedHosts = [...hosts].sort((a, b) => {
+    const order: Record<string, number> = { connected: 0, connecting: 1, error: 2, idle: 3 };
+    return (order[a.state] ?? 3) - (order[b.state] ?? 3);
+  });
 
   return (
     <aside className="sidebar">
@@ -122,11 +119,36 @@ export function Sidebar({
       <div className="sidebar-spacer" />
 
       <div className="sidebar-hosts">
-        <div className="sidebar-hosts-header">Hosts</div>
-        {hosts.length === 0 && !showAddForm && (
+        <div className="sidebar-hosts-header">
+          Connections
+          <button className="sidebar-add-btn" onClick={() => setShowAddForm(!showAddForm)} title="Add manually">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+
+        {discoveries.map((peer) => (
+          <div key={peer.tailscaleIp} className="sidebar-discovery-card">
+            <div className="sidebar-discovery-info">
+              <span className="sidebar-discovery-name">{peer.name}</span>
+              <span className="sidebar-discovery-ip muted">{peer.tailscaleIp}</span>
+            </div>
+            <div className="sidebar-discovery-actions">
+              <button className="btn-discovery-add" onClick={() => onAcceptDiscovery(peer.tailscaleIp)}>Add</button>
+              <button className="btn-discovery-dismiss" onClick={() => onDismissDiscovery(peer.tailscaleIp)}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {sortedHosts.length === 0 && discoveries.length === 0 && !showAddForm && (
           <div className="sidebar-hosts-empty">Add a remote host to connect</div>
         )}
-        {hosts.map((conn) => (
+        {sortedHosts.map((conn) => (
           <div key={conn.host.id} className="sidebar-host-row">
             <span className={`status-dot ${conn.state}`} />
             <span className="sidebar-host-name">{conn.host.name}</span>
@@ -145,7 +167,7 @@ export function Sidebar({
           </div>
         ))}
 
-        {showAddForm ? (
+        {showAddForm && (
           <div className="sidebar-add-host-form">
             <input
               className="sidebar-add-host-input"
@@ -166,79 +188,6 @@ export function Sidebar({
               <button className="btn-secondary sidebar-add-host-btn" onClick={() => setShowAddForm(false)}>Cancel</button>
             </div>
           </div>
-        ) : (
-          <button className="sidebar-add-host-toggle" onClick={() => setShowAddForm(true)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Add host
-          </button>
-        )}
-        {/* Hosting toggle */}
-        <div className="sidebar-hosting">
-          {hostingStatus === "idle" || hostingStatus === "error" ? (
-            <button className="sidebar-hosting-btn" onClick={onStartHosting}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-              Host a connection
-            </button>
-          ) : hostingStatus === "starting" ? (
-            <button className="sidebar-hosting-btn disabled" disabled>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-              </svg>
-              Starting...
-            </button>
-          ) : (
-            <div className="sidebar-hosting-active">
-              <div className="sidebar-hosting-header">
-                <span className="sidebar-hosting-label">
-                  <span className="status-dot connected" />
-                  Hosting
-                </span>
-                <button className="sidebar-hosting-stop" onClick={onStopHosting} title="Stop hosting">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-                  </svg>
-                </button>
-              </div>
-              {hostingAddress && (
-                <div className="sidebar-hosting-address">
-                  <code>{hostingAddress}</code>
-                  <button
-                    className="sidebar-hosting-copy"
-                    onClick={() => void navigator.clipboard.writeText(hostingAddress)}
-                    title="Copy address"
-                  >
-                    Copy
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          {hostingStatus === "error" && hostingError && (
-            <div className="sidebar-hosting-error">
-              {hostingError}
-              {hostingError.includes("not installed") && (
-                <>
-                  {". "}
-                  <button className="sidebar-setup-link-inline" onClick={onShowSetupChecklist}>
-                    Set up this computer
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-        {!showSetupChecklist && (
-          <button
-            className="sidebar-setup-link"
-            onClick={onShowSetupChecklist}
-          >
-            Set up this computer
-          </button>
         )}
       </div>
 

@@ -61,40 +61,46 @@ pub fn run() {
             detect::detect_tailscale_ip,
         ])
         .setup(|app| {
-            // Spawn the daemon sidecar
-            let sidecar = app
-                .shell()
-                .sidecar("binaries/ghost-protocol-daemon")
-                .map_err(|e| format!("failed to create daemon sidecar: {e}"))?;
-            let (mut rx, child) = sidecar
-                .spawn()
-                .map_err(|e| format!("failed to spawn daemon sidecar: {e}"))?;
+            // Skip sidecar in dev mode or if explicitly disabled
+            if cfg!(debug_assertions) || std::env::var("GHOST_NO_SIDECAR").is_ok() {
+                eprintln!("[daemon] sidecar disabled (dev mode or GHOST_NO_SIDECAR set)");
+                return Ok(());
+            }
 
-            // Store the child so we can kill it on exit
-            app.manage(Mutex::new(Some(child)));
+            // Try to spawn, but don't fail if it doesn't work
+            match app.shell().sidecar("binaries/ghost-protocol-daemon") {
+                Ok(sidecar) => {
+                    match sidecar.spawn() {
+                        Ok((mut rx, child)) => {
+                            app.manage(Mutex::new(Some(child)));
 
-            // Log daemon output in background
-            tauri::async_runtime::spawn(async move {
-                use tauri_plugin_shell::process::CommandEvent;
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        CommandEvent::Stdout(line) => {
-                            let line = String::from_utf8_lossy(&line);
-                            eprintln!("[daemon stdout] {}", line);
+                            // Log daemon output in background
+                            tauri::async_runtime::spawn(async move {
+                                use tauri_plugin_shell::process::CommandEvent;
+                                while let Some(event) = rx.recv().await {
+                                    match event {
+                                        CommandEvent::Stdout(line) => {
+                                            let line = String::from_utf8_lossy(&line);
+                                            eprintln!("[daemon stdout] {}", line);
+                                        }
+                                        CommandEvent::Stderr(line) => {
+                                            let line = String::from_utf8_lossy(&line);
+                                            eprintln!("[daemon stderr] {}", line);
+                                        }
+                                        CommandEvent::Terminated(status) => {
+                                            eprintln!("[daemon] exited: {:?}", status);
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
                         }
-                        CommandEvent::Stderr(line) => {
-                            let line = String::from_utf8_lossy(&line);
-                            eprintln!("[daemon stderr] {}", line);
-                        }
-                        CommandEvent::Terminated(status) => {
-                            eprintln!("[daemon] exited: {:?}", status);
-                            break;
-                        }
-                        _ => {}
+                        Err(e) => eprintln!("[daemon] failed to spawn sidecar: {e}"),
                     }
                 }
-            });
-
+                Err(e) => eprintln!("[daemon] sidecar not available: {e}"),
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

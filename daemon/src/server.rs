@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 use tracing::info;
 
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::Settings;
 use crate::host::logs::LogBuffer;
@@ -183,7 +183,10 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
 
         if let Some(web_path) = web_dir {
             info!(path = %web_path.display(), "serving PWA frontend");
-            app.fallback_service(ServeDir::new(web_path))
+            app.fallback_service(
+                ServeDir::new(&web_path)
+                    .fallback(ServeFile::new(web_path.join("index.html")))
+            )
         } else {
             app
         }

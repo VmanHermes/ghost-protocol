@@ -85,18 +85,28 @@ cd desktop && npm install && npm run tauri build
 ### Development
 
 ```bash
-# Terminal 1: Start the daemon
-cd daemon
-cargo run -- serve
+# Start everything (daemon + desktop app)
+bash scripts/dev.sh
 
-# Terminal 2: Start the desktop app
-cd desktop
-npm run tauri dev
+# Or with a fresh database
+bash scripts/dev.sh --reset
+```
 
-# Terminal 3 (optional): Use the ghost CLI
-cd cli
-cargo run -- status
-cargo run -- agents
+Press `Ctrl+C` to stop all processes.
+
+To use the ghost CLI while dev is running:
+```bash
+cd cli && cargo run -- status
+cd cli && cargo run -- agents
+```
+
+To start components individually:
+```bash
+# Terminal 1: Daemon
+cd daemon && cargo run -- serve
+
+# Terminal 2: Desktop app
+cd desktop && npm run tauri dev
 ```
 
 ### Production

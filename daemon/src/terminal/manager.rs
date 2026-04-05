@@ -75,6 +75,28 @@ impl TerminalManager {
         // 6. Store session
         self.sessions.lock().await.insert(id.clone(), managed);
 
+        // Inject welcome message for terminal sessions
+        if mode != "chat" {
+            let sys_info = crate::host::detect::get_system_info();
+            let hostname = &sys_info.hostname;
+            let ip = sys_info.tailscale_ip.as_deref().unwrap_or("local");
+            let version = env!("CARGO_PKG_VERSION");
+            let welcome = format!(
+                "\x1b[2m\
+Ghost Protocol v{version} — {hostname} ({ip})\n\
+\n\
+Commands:\n\
+  ghost init          Set up a project in this directory\n\
+  ghost status        Mesh overview (machines, sessions)\n\
+  ghost agents        Available agents across the mesh\n\
+  ghost chat <agent>  Start a chat with an agent\n\
+  ghost projects      Registered projects\n\
+  ghost help          Full command reference\n\
+\x1b[0m\n"
+            );
+            self.store.append_terminal_chunk(&id, "system", &welcome).ok();
+        }
+
         info!(session_id = %id, "terminal session created");
         Ok(record)
     }

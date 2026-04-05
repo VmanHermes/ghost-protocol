@@ -879,6 +879,70 @@ pub async fn approve_approval(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/discoveries (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn list_discoveries(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::store::discoveries::DiscoveredPeer>>, (StatusCode, Json<serde_json::Value>)> {
+    state
+        .store
+        .list_pending_discoveries()
+        .map(Json)
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+        })
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/discoveries/{ip}/accept (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn accept_discovery(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(ip): Path<String>,
+) -> Result<(StatusCode, Json<crate::store::hosts::KnownHost>), (StatusCode, Json<serde_json::Value>)> {
+    let peer = state.store.get_discovery(&ip).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "discovery not found" })))
+    })?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let url = format!("http://{}:8787", ip);
+    let host = state.store.add_known_host(&id, &peer.name, &ip, &url).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?;
+
+    state.store.set_peer_permission(&id, "no-access").map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?;
+
+    state.store.accept_discovery(&ip).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?;
+
+    Ok((StatusCode::CREATED, Json(host)))
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/discoveries/{ip}/dismiss (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn dismiss_discovery(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(ip): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    state.store.dismiss_discovery(&ip).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
 // PUT /api/approvals/{id}/deny  (localhost-only)
 // ---------------------------------------------------------------------------
 

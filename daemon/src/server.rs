@@ -6,6 +6,8 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 use tracing::info;
 
+use tower_http::services::ServeDir;
+
 use crate::config::Settings;
 use crate::host::logs::LogBuffer;
 use crate::middleware::cors::cors_layer;
@@ -164,6 +166,28 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         .layer(middleware::from_fn(cors_layer))
         .layer(middleware::from_fn_with_state(store_for_guard, tailscale_guard))
         .layer(Extension(Arc::new(settings.clone())));
+
+    let app = {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let web_dir = exe_dir
+            .as_ref()
+            .map(|d| d.join("resources/web"))
+            .filter(|p| p.is_dir())
+            .or_else(|| {
+                let cwd = std::env::current_dir().ok()?;
+                let p = cwd.join("web");
+                p.is_dir().then_some(p)
+            });
+
+        if let Some(web_path) = web_dir {
+            info!(path = %web_path.display(), "serving PWA frontend");
+            app.fallback_service(ServeDir::new(web_path))
+        } else {
+            app
+        }
+    };
 
     // 9. Bind to all configured hosts
     let mut handles = Vec::new();

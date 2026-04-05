@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { api, listHosts, addHostApi, removeHostApi, type ApiHost } from "./api";
-import { loadHosts, addHost as persistAddHost, removeHost as persistRemoveHost } from "./hosts";
+import { api, listHosts, addHostApi, removeHostApi, listDiscoveries, acceptDiscovery, dismissDiscovery, type ApiHost } from "./api";
 import { appLog } from "./log";
 import type {
+  DiscoveredPeer,
   HostConnection,
   LocalTerminalSession,
   SavedHost,
@@ -13,6 +13,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TerminalWorkspace } from "./components/TerminalWorkspace";
 import { LogViewer } from "./components/LogViewer";
 import { RightPanel } from "./components/RightPanel";
+import { PermissionsTab } from "./components/PermissionsTab";
 import "./App.css";
 
 // NOTE: "chat" view is hidden until the Rust daemon adds conversation/agent support.
@@ -37,8 +38,7 @@ function App() {
         apiHosts.map((h: ApiHost) => ({ id: h.id, name: h.name, url: h.url })),
       );
     } catch {
-      // Fall back to localStorage if daemon isn't running
-      setHosts(loadHosts());
+      // ignore
     }
   }, []);
 
@@ -53,10 +53,9 @@ function App() {
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null);
   const [localSessions, setLocalSessions] = useState<LocalTerminalSession[]>([]);
   const [, setActionError] = useState("");
-  const [showSetupChecklist, setShowSetupChecklist] = useState(() => loadHosts().length === 0);
-  const [hostingStatus, setHostingStatus] = useState<"idle" | "starting" | "active" | "error">("idle");
-  const [hostingError, setHostingError] = useState<string | null>(null);
-  const [hostingAddress, setHostingAddress] = useState<string | null>(null);
+
+  // Discovery state
+  const [discoveries, setDiscoveries] = useState<DiscoveredPeer[]>([]);
 
   // --- Derived state (activeHostId) ---
 
@@ -69,11 +68,8 @@ function App() {
     return null;
   }, [activeTerminalSessionId, connections, localSessions]);
 
-  const activeConnection = activeHostId ? connections.get(activeHostId) ?? null : null;
   const activeHost = activeHostId ? hosts.find((h) => h.id === activeHostId) ?? null : null;
   const activeHostUrl = activeHost?.url ?? null;
-  const activeSystemStatus = activeConnection?.systemStatus ?? null;
-  const activeTerminalSessions = activeConnection?.sessions ?? [];
 
   // --- Connection helpers ---
 
@@ -138,25 +134,6 @@ function App() {
     initializeHosts(hosts);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Restore hosting state on launch
-  useEffect(() => {
-    (async () => {
-      try {
-        await invoke<string>("detect_daemon");
-        // Daemon is running — check if Tailscale is connected
-        try {
-          const ip = await invoke<string>("detect_tailscale_ip");
-          setHostingStatus("active");
-          setHostingAddress(`${ip}:8787`);
-        } catch {
-          // Daemon running but no Tailscale — started manually, stay idle
-        }
-      } catch {
-        // No daemon running — stay idle
-      }
-    })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Auto-spawn a local terminal on first mount
   const localSpawnedRef = useRef(false);
   useEffect(() => {
@@ -184,6 +161,22 @@ function App() {
     }, 30000);
     return () => clearInterval(interval);
   }, [checkHostHealth]);
+
+  // Discovery polling every 30s
+  const refreshDiscoveries = useCallback(async () => {
+    try {
+      const disc = await listDiscoveries(LOCAL_DAEMON);
+      setDiscoveries(disc);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDiscoveries();
+    const interval = setInterval(refreshDiscoveries, 30000);
+    return () => clearInterval(interval);
+  }, [refreshDiscoveries]);
 
   // --- Action handlers ---
 
@@ -297,16 +290,14 @@ function App() {
       const ip = new URL(url).hostname;
       await addHostApi(LOCAL_DAEMON, name, ip);
       await refreshHosts();
-    } catch {
-      // Fall back to localStorage
-      setHosts((prev) => persistAddHost(prev, name, url));
+    } catch (error) {
+      appLog.error("app", `Failed to add host: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, [refreshHosts]);
 
   const handleRemoveHost = useCallback(async (hostId: string) => {
     const host = hosts.find((h) => h.id === hostId);
     const conn = connections.get(hostId);
-    // Terminate active sessions on this host
     if (host && conn?.sessions) {
       const active = conn.sessions.filter((s) => s.status === "created" || s.status === "running");
       for (const session of active) {
@@ -316,8 +307,8 @@ function App() {
     try {
       await removeHostApi(LOCAL_DAEMON, hostId);
       await refreshHosts();
-    } catch {
-      setHosts((prev) => persistRemoveHost(prev, hostId));
+    } catch (error) {
+      appLog.error("app", `Failed to remove host: ${error instanceof Error ? error.message : String(error)}`);
     }
     setConnections((prev) => {
       const next = new Map(prev);
@@ -329,92 +320,24 @@ function App() {
     }
   }, [hosts, connections, activeTerminalSessionId, refreshHosts]);
 
-  const handleHostDetected = useCallback((name: string, url: string) => {
-    const alreadyExists = hosts.some((h) => h.url === url);
-    if (!alreadyExists) {
-      void handleAddHost(name, url);
-    }
-    setShowSetupChecklist(false);
-  }, [hosts, handleAddHost]);
-
-  const handleStartHosting = useCallback(async () => {
-    appLog.info("hosting", "Starting host flow...");
-    setHostingStatus("starting");
-    setHostingError(null);
-
-    // 1. Check Tailscale
-    let tailscaleIp: string;
+  const handleAcceptDiscovery = useCallback(async (ip: string) => {
     try {
-      tailscaleIp = await invoke<string>("detect_tailscale_ip");
-      appLog.info("hosting", `Tailscale IP: ${tailscaleIp}`);
-    } catch {
-      appLog.error("hosting", "Tailscale not connected to a mesh");
-      setHostingStatus("error");
-      setHostingError("Tailscale not connected to a mesh");
-      return;
+      await acceptDiscovery(LOCAL_DAEMON, ip);
+      await refreshHosts();
+      await refreshDiscoveries();
+    } catch (error) {
+      appLog.error("discovery", `Failed to accept: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }, [refreshHosts, refreshDiscoveries]);
 
-    // 2. Install daemon if needed, then start
+  const handleDismissDiscovery = useCallback(async (ip: string) => {
     try {
-      appLog.info("hosting", "Checking daemon installation...");
-      const installResult = await invoke<string>("install_daemon");
-      appLog.info("hosting", `Daemon install: ${installResult}`);
-    } catch (err) {
-      const msg = String(err ?? "");
-      appLog.error("hosting", `Failed to install daemon: ${msg}`);
-      setHostingStatus("error");
-      setHostingError(`Failed to install daemon: ${msg}`);
-      return;
+      await dismissDiscovery(LOCAL_DAEMON, ip);
+      await refreshDiscoveries();
+    } catch (error) {
+      appLog.error("discovery", `Failed to dismiss: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    try {
-      await invoke<string>("start_daemon", { bindHost: tailscaleIp, port: 8787 });
-      appLog.info("hosting", `Daemon spawned, binding to ${tailscaleIp}:8787`);
-    } catch (err) {
-      const msg = String(err ?? "");
-      appLog.error("hosting", `Failed to start daemon: ${msg}`);
-      setHostingStatus("error");
-      setHostingError(`Failed to start daemon: ${msg}`);
-      return;
-    }
-
-    // 3. Poll for health (up to 10 seconds)
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      try {
-        await invoke<string>("detect_daemon");
-        appLog.info("hosting", `Daemon healthy after ${i + 1}s — now hosting on ${tailscaleIp}:8787`);
-        setHostingStatus("active");
-        setHostingAddress(`${tailscaleIp}:8787`);
-        const alreadyExists = hosts.some((h) => h.url === "http://127.0.0.1:8787");
-        if (!alreadyExists) {
-          void handleAddHost("This Computer", "http://127.0.0.1:8787");
-        }
-        return;
-      } catch {
-        appLog.debug("hosting", `Health poll ${i + 1}/10 — not ready`);
-      }
-    }
-
-    // Timeout — daemon failed to start
-    appLog.error("hosting", "Daemon failed to start (timed out after 10s)");
-    setHostingStatus("error");
-    setHostingError("Daemon failed to start (timed out)");
-    try { await invoke("stop_daemon"); } catch { /* ignore */ }
-  }, [hosts, handleAddHost]);
-
-  const handleStopHosting = useCallback(async () => {
-    appLog.info("hosting", "Stopping daemon...");
-    try {
-      await invoke("stop_daemon");
-      appLog.info("hosting", "Daemon stopped");
-    } catch {
-      // Ignore — may already be stopped
-    }
-    setHostingStatus("idle");
-    setHostingAddress(null);
-    setHostingError(null);
-  }, []);
+  }, [refreshDiscoveries]);
 
   // --- Render ---
 
@@ -441,17 +364,13 @@ function App() {
     <main className="shell">
       <Sidebar
         hosts={hostConnections}
+        discoveries={discoveries}
         mainView={mainView}
         onChangeView={setMainView}
         onAddHost={handleAddHost}
         onRemoveHost={handleRemoveHost}
-        showSetupChecklist={showSetupChecklist}
-        onShowSetupChecklist={() => setShowSetupChecklist(true)}
-        hostingStatus={hostingStatus}
-        hostingError={hostingError}
-        hostingAddress={hostingAddress}
-        onStartHosting={() => void handleStartHosting()}
-        onStopHosting={() => void handleStopHosting()}
+        onAcceptDiscovery={handleAcceptDiscovery}
+        onDismissDiscovery={handleDismissDiscovery}
       />
 
       <section className="main-panel">
@@ -473,11 +392,6 @@ function App() {
             onLocalSessionStatusChange={handleLocalSessionStatusChange}
             onKillRemoteSession={(id) => void handleKillRemoteSession(id)}
             onKillLocalSession={(id) => void handleKillLocalSession(id)}
-            setupChecklist={{
-              visible: showSetupChecklist,
-              onDismiss: () => setShowSetupChecklist(false),
-              onHostDetected: handleHostDetected,
-            }}
           />
         </div>
         <div style={{ display: mainView === "logs" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
@@ -487,30 +401,25 @@ function App() {
           <div className="settings-view">
             <div className="settings-header">
               <h2>Settings</h2>
-              <p className="muted">Host connections and configuration</p>
+              <p className="muted">Configuration & permissions</p>
             </div>
             <div className="settings-content">
               <div className="settings-section">
-                <h3>Active Host: {activeHost?.name ?? "None (Local)"}</h3>
-                {activeSystemStatus && (
-                  <div className="settings-info-grid">
-                    <div className="settings-info-item">
-                      <span className="settings-info-label">Bind address</span>
-                      <span className="settings-info-value">{activeSystemStatus.connection?.bindHost ?? "—"}:{activeSystemStatus.connection?.bindPort ?? "—"}</span>
-                    </div>
-                    <div className="settings-info-item">
-                      <span className="settings-info-label">Terminal sessions</span>
-                      <span className="settings-info-value">{activeTerminalSessions.length} total</span>
-                    </div>
-                    <div className="settings-info-item">
-                      <span className="settings-info-label">Allowed CIDRs</span>
-                      <span className="settings-info-value">{activeSystemStatus.connection?.allowedCidrs?.join(", ") ?? "—"}</span>
-                    </div>
+                <h3>Permissions</h3>
+                <PermissionsTab daemonUrl={LOCAL_DAEMON} />
+              </div>
+              <div className="settings-section">
+                <h3>Network</h3>
+                <div className="settings-info-grid">
+                  <div className="settings-info-item">
+                    <span className="settings-info-label">Daemon</span>
+                    <span className="settings-info-value">{LOCAL_DAEMON}</span>
                   </div>
-                )}
-                {!activeSystemStatus && (
-                  <p className="muted">Select a remote terminal tab to view host settings</p>
-                )}
+                  <div className="settings-info-item">
+                    <span className="settings-info-label">Known hosts</span>
+                    <span className="settings-info-value">{hosts.length}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

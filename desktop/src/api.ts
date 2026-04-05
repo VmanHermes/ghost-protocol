@@ -1,4 +1,4 @@
-import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier, DiscoveredPeer } from "./types";
+import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier, DiscoveredPeer, AgentInfo, ProjectRecord, ChatMessage } from "./types";
 
 export function wsUrlFromHttp(baseUrl: string) {
   if (baseUrl.startsWith("https://")) return baseUrl.replace("https://", "wss://") + "/ws";
@@ -122,4 +122,42 @@ export async function dismissDiscovery(
   ip: string,
 ): Promise<void> {
   await fetch(`${daemonUrl}/api/discoveries/${ip}/dismiss`, { method: "PUT" });
+}
+
+export async function listAgents(daemonUrl: string): Promise<AgentInfo[]> {
+  return api<AgentInfo[]>(daemonUrl, "/api/agents");
+}
+
+export async function listProjects(daemonUrl: string): Promise<ProjectRecord[]> {
+  return api<ProjectRecord[]>(daemonUrl, "/api/projects");
+}
+
+export async function createChatSession(
+  daemonUrl: string,
+  agentId: string,
+  projectId?: string,
+  workdir?: string,
+): Promise<{ session: any; agent: AgentInfo }> {
+  return api(daemonUrl, "/api/chat/sessions", {
+    method: "POST",
+    body: JSON.stringify({ agentId, projectId, workdir }),
+  });
+}
+
+export async function listChatMessages(
+  daemonUrl: string,
+  sessionId: string,
+): Promise<ChatMessage[]> {
+  return api<ChatMessage[]>(daemonUrl, `/api/chat/sessions/${sessionId}/messages`);
+}
+
+export async function sendChatMessage(
+  daemonUrl: string,
+  sessionId: string,
+  content: string,
+): Promise<ChatMessage> {
+  return api(daemonUrl, `/api/chat/sessions/${sessionId}/message`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
 }

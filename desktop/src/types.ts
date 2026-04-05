@@ -215,3 +215,30 @@ export type DiscoveredPeer = {
   name: string;
   discoveredAt: string;
 };
+
+// --- Agent & project types (Phase 3a) ---
+
+export type AgentInfo = {
+  id: string;
+  name: string;
+  agentType: "cli" | "api";
+  command: string;
+  version: string | null;
+};
+
+export type ProjectRecord = {
+  id: string;
+  name: string;
+  workdir: string;
+  configJson: string;
+  registeredAt: string;
+  updatedAt: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  sessionId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+};

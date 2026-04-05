@@ -55,15 +55,37 @@ export function useLocalTerminal({
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
   useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
 
-  // Flush buffered chunks when terminal becomes available
+  // Flush buffered chunks + inject welcome text when terminal becomes available
+  const welcomeShownRef = useRef(false);
   useEffect(() => {
     if (!isActive) return;
     const terminal = terminalRef.current;
-    if (!terminal || chunkBufferRef.current.length === 0) return;
-    for (const data of chunkBufferRef.current) {
-      terminal.write(data);
+    if (!terminal) return;
+
+    // Inject welcome text once
+    if (!welcomeShownRef.current) {
+      welcomeShownRef.current = true;
+      terminal.write(
+        "\x1b[2m" +
+        "Ghost Protocol — Developer Console\r\n" +
+        "\r\n" +
+        "Commands:\r\n" +
+        "  ghost init          Set up a project in this directory\r\n" +
+        "  ghost status        Mesh overview (machines, sessions)\r\n" +
+        "  ghost agents        Available agents across the mesh\r\n" +
+        "  ghost chat <agent>  Start a chat with an agent\r\n" +
+        "  ghost projects      Registered projects\r\n" +
+        "  ghost help          Full command reference\r\n" +
+        "\x1b[0m\r\n"
+      );
     }
-    chunkBufferRef.current = [];
+
+    if (chunkBufferRef.current.length > 0) {
+      for (const data of chunkBufferRef.current) {
+        terminal.write(data);
+      }
+      chunkBufferRef.current = [];
+    }
   }, [terminalRef, isActive]);
 
   // Main event listener lifecycle

@@ -20,11 +20,19 @@ async fn main() {
     // CLI subcommands talk to a running daemon via HTTP — no tracing needed
     match &cli.command {
         Some(CliCommand::Serve) | None => {
+            use tracing_subscriber::layer::SubscriberExt;
+            use tracing_subscriber::util::SubscriberInitExt;
+
+            let log_buffer = host::logs::LogBuffer::new();
+            let log_layer = host::logs::LogBufferLayer { buffer: log_buffer.clone() };
+
             tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::try_from_default_env()
                         .unwrap_or_else(|_| "ghost_protocol_daemon=info".into()),
                 )
+                .finish()
+                .with(log_layer)
                 .init();
 
             let settings = Settings::from_cli(cli).expect("invalid configuration");
@@ -35,7 +43,7 @@ async fn main() {
                 "starting ghost-protocol-daemon"
             );
 
-            if let Err(e) = server::run(settings).await {
+            if let Err(e) = server::run(settings, log_buffer).await {
                 tracing::error!(error = %e, "daemon exited with error");
                 std::process::exit(1);
             }

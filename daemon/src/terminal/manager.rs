@@ -40,9 +40,12 @@ impl TerminalManager {
         mode: &str,
         name: Option<&str>,
         workdir: &str,
+        command_override: Option<&str>,
     ) -> Result<TerminalSessionRecord, String> {
         let id = Uuid::new_v4().to_string();
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let shell = command_override
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
         let cmd = tmux::attach_command(&id);
 
         // 1. Create DB record
@@ -94,7 +97,11 @@ Commands:\n\
   ghost help          Full command reference\n\
 \x1b[0m\n"
             );
-            self.store.append_terminal_chunk(&id, "system", &welcome).ok();
+            if let Ok(chunk) = self.store.append_terminal_chunk(&id, "stdout", &welcome) {
+                if let Some(bc) = self.broadcasters.lock().await.get(&id) {
+                    bc.send(chunk);
+                }
+            }
         }
 
         info!(session_id = %id, "terminal session created");

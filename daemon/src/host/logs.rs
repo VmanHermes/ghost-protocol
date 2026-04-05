@@ -1,7 +1,10 @@
 use std::collections::VecDeque;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use chrono::Utc;
 use serde::Serialize;
+use tracing::field::{Field, Visit};
 
 const DEFAULT_CAPACITY: usize = 1000;
 
@@ -54,6 +57,54 @@ impl LogBuffer {
         let matching: Vec<LogEntry> = iter.cloned().collect();
         let start = matching.len().saturating_sub(limit);
         matching[start..].to_vec()
+    }
+}
+
+// --- Tracing integration ---
+
+/// Visitor that extracts the message field from a tracing event.
+#[derive(Default)]
+struct MessageVisitor {
+    message: String,
+}
+
+impl Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{:?}", value);
+        } else if self.message.is_empty() {
+            // Fallback: use first field as message
+            self.message = format!("{} = {:?}", field.name(), value);
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = value.to_string();
+        }
+    }
+}
+
+/// A tracing Layer that forwards events to a LogBuffer.
+pub struct LogBufferLayer {
+    pub buffer: LogBuffer,
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogBufferLayer {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut visitor = MessageVisitor::default();
+        event.record(&mut visitor);
+
+        self.buffer.push(LogEntry {
+            level: event.metadata().level().to_string(),
+            message: visitor.message,
+            timestamp: Utc::now().to_rfc3339(),
+            source: event.metadata().target().to_string(),
+        });
     }
 }
 

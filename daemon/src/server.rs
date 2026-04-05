@@ -15,15 +15,12 @@ use crate::terminal::manager::TerminalManager;
 use crate::transport::http::{self, AppState};
 use crate::transport::ws;
 
-pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Open store
     let store = Store::open(&settings.db_path)?;
 
     // 2. Create terminal manager
     let manager = TerminalManager::new(store.clone());
-
-    // 3. Create log buffer
-    let log_buffer = LogBuffer::new();
 
     // 4. Recover sessions
     manager.recover().await;

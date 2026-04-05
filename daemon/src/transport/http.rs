@@ -157,7 +157,7 @@ pub async fn create_session(
 
     let rec = state
         .manager
-        .create_session(&body.mode, body.name.as_deref(), &body.workdir)
+        .create_session(&body.mode, body.name.as_deref(), &body.workdir, None)
         .await
         .map_err(|e| {
             (
@@ -775,7 +775,7 @@ async fn replay_request(
                 });
             let rec = state
                 .manager
-                .create_session(&body.mode, body.name.as_deref(), &body.workdir)
+                .create_session(&body.mode, body.name.as_deref(), &body.workdir, None)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(rec).map_err(|e| e.to_string())
@@ -1192,7 +1192,7 @@ pub async fn create_chat_session(
 
     // Create session with mode "chat"
     let session = state.manager
-        .create_session("chat", Some(&agent.name), &workdir)
+        .create_session("chat", Some(&agent.name), &workdir, Some(&agent.command))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
 

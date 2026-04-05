@@ -13,16 +13,24 @@ pub fn new_session(session_id: &str, workdir: &str, shell: &str) -> Result<(), S
 
     debug!(session = %name, workdir, shell, "creating tmux session");
 
-    let output = Command::new("tmux")
-        .args([
-            "new-session",
-            "-d",
-            "-s", &name,
-            "-x", "120",
-            "-y", "32",
-            "-c", workdir,
-            shell,
-        ])
+    let mut cmd = Command::new("tmux");
+    cmd.args([
+        "new-session",
+        "-d",
+        "-s", &name,
+        "-x", "120",
+        "-y", "32",
+        "-c", workdir,
+    ]);
+
+    // Multi-word commands (e.g., "ollama run llama3") need bash -c wrapping
+    if shell.contains(' ') {
+        cmd.args(["bash", "-c", shell]);
+    } else {
+        cmd.arg(shell);
+    }
+
+    let output = cmd
         .output()
         .map_err(|e| format!("failed to spawn tmux: {e}"))?;
 

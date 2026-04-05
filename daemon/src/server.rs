@@ -80,6 +80,7 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 7. Build router
+    let store_for_guard = state.store.clone();
     let app = Router::new()
         .route("/health", get(http::health))
         .route("/api/system/status", get(http::system_status))
@@ -108,7 +109,7 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
         .route("/ws", get(ws::ws_upgrade))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
-        .layer(middleware::from_fn(tailscale_guard))
+        .layer(middleware::from_fn_with_state(store_for_guard, tailscale_guard))
         .layer(Extension(Arc::new(settings.clone())));
 
     // 8. Bind to all configured hosts

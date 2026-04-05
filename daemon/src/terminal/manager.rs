@@ -48,7 +48,7 @@ impl TerminalManager {
         // 1. Create DB record
         let mut record = self
             .store
-            .create_terminal_session(&id, mode, name, workdir, &cmd)
+            .create_terminal_session(&id, mode, name, workdir, &cmd, "terminal", None)
             .map_err(|e| format!("db error creating session: {e}"))?;
 
         // 2. Create tmux session

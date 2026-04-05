@@ -79,7 +79,7 @@ mod tests {
         let store = test_store();
         let cmd = vec!["bash".to_string()];
         store
-            .create_terminal_session("s1", "local", None, "/tmp", &cmd)
+            .create_terminal_session("s1", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
 
         let c1 = store.append_terminal_chunk("s1", "stdout", "hello ").unwrap();
@@ -98,7 +98,7 @@ mod tests {
         let store = test_store();
         let cmd = vec!["bash".to_string()];
         store
-            .create_terminal_session("s1", "local", None, "/tmp", &cmd)
+            .create_terminal_session("s1", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
 
         store.append_terminal_chunk("s1", "stdout", "a").unwrap();
@@ -116,7 +116,7 @@ mod tests {
         let store = test_store();
         let cmd = vec!["bash".to_string()];
         store
-            .create_terminal_session("s1", "local", None, "/tmp", &cmd)
+            .create_terminal_session("s1", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
 
         let before = store.get_terminal_session("s1").unwrap().unwrap();

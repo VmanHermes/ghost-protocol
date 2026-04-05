@@ -19,6 +19,8 @@ pub struct TerminalSessionRecord {
     pub last_chunk_at: Option<String>,
     pub pid: Option<i64>,
     pub exit_code: Option<i32>,
+    pub session_type: String,
+    pub project_id: Option<String>,
 }
 
 impl Store {
@@ -29,14 +31,16 @@ impl Store {
         name: Option<&str>,
         workdir: &str,
         command: &[String],
+        session_type: &str,
+        project_id: Option<&str>,
     ) -> Result<TerminalSessionRecord, rusqlite::Error> {
         let now = Utc::now().to_rfc3339();
         let command_json = serde_json::to_string(command).unwrap();
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO terminal_sessions (id, mode, status, name, workdir, command_json, created_at)
-             VALUES (?1, ?2, 'created', ?3, ?4, ?5, ?6)",
-            params![id, mode, name, workdir, command_json, now],
+            "INSERT INTO terminal_sessions (id, mode, status, name, workdir, command_json, created_at, session_type, project_id)
+             VALUES (?1, ?2, 'created', ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![id, mode, name, workdir, command_json, now, session_type, project_id],
         )?;
         Ok(TerminalSessionRecord {
             id: id.to_string(),
@@ -51,6 +55,8 @@ impl Store {
             last_chunk_at: None,
             pid: None,
             exit_code: None,
+            session_type: session_type.to_string(),
+            project_id: project_id.map(|s| s.to_string()),
         })
     }
 
@@ -111,7 +117,8 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, name, workdir, command_json, created_at,
-                    started_at, finished_at, last_chunk_at, pid, exit_code
+                    started_at, finished_at, last_chunk_at, pid, exit_code,
+                    session_type, project_id
              FROM terminal_sessions WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![session_id], |row| {
@@ -131,6 +138,8 @@ impl Store {
                 last_chunk_at: row.get(9)?,
                 pid: row.get(10)?,
                 exit_code: row.get(11)?,
+                session_type: row.get(12)?,
+                project_id: row.get(13)?,
             })
         })?;
         match rows.next() {
@@ -145,7 +154,8 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, name, workdir, command_json, created_at,
-                    started_at, finished_at, last_chunk_at, pid, exit_code
+                    started_at, finished_at, last_chunk_at, pid, exit_code,
+                    session_type, project_id
              FROM terminal_sessions ORDER BY created_at DESC, id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -165,6 +175,8 @@ impl Store {
                 last_chunk_at: row.get(9)?,
                 pid: row.get(10)?,
                 exit_code: row.get(11)?,
+                session_type: row.get(12)?,
+                project_id: row.get(13)?,
             })
         })?;
         rows.collect()
@@ -190,7 +202,7 @@ mod tests {
         let store = test_store();
         let cmd = vec!["bash".to_string(), "-c".to_string(), "echo hi".to_string()];
         let rec = store
-            .create_terminal_session("s1", "local", Some("test"), "/tmp", &cmd)
+            .create_terminal_session("s1", "local", Some("test"), "/tmp", &cmd, "terminal", None)
             .unwrap();
         assert_eq!(rec.id, "s1");
         assert_eq!(rec.status, "created");
@@ -206,7 +218,7 @@ mod tests {
         let store = test_store();
         let cmd = vec!["bash".to_string()];
         store
-            .create_terminal_session("s2", "local", None, "/tmp", &cmd)
+            .create_terminal_session("s2", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
         store
             .update_terminal_session("s2", Some("running"), Some("2026-01-01T00:00:00Z"), None, None, Some(1234), None)
@@ -222,10 +234,10 @@ mod tests {
         let store = test_store();
         let cmd = vec!["bash".to_string()];
         store
-            .create_terminal_session("a", "local", None, "/tmp", &cmd)
+            .create_terminal_session("a", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
         store
-            .create_terminal_session("b", "local", None, "/tmp", &cmd)
+            .create_terminal_session("b", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
         let list = store.list_terminal_sessions().unwrap();
         assert_eq!(list.len(), 2);
@@ -236,16 +248,16 @@ mod tests {
         let store = test_store();
         let cmd = vec!["bash".to_string()];
         store
-            .create_terminal_session("t1", "local", None, "/tmp", &cmd)
+            .create_terminal_session("t1", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
         store
-            .create_terminal_session("t2", "local", None, "/tmp", &cmd)
+            .create_terminal_session("t2", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
         store
             .update_terminal_session("t2", Some("running"), None, None, None, None, None)
             .unwrap();
         store
-            .create_terminal_session("t3", "local", None, "/tmp", &cmd)
+            .create_terminal_session("t3", "local", None, "/tmp", &cmd, "terminal", None)
             .unwrap();
         store
             .update_terminal_session("t3", Some("exited"), None, None, None, None, None)

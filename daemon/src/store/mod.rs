@@ -4,6 +4,8 @@ pub mod hosts;
 pub mod permissions;
 pub mod discoveries;
 pub mod outcomes;
+pub mod projects;
+pub mod chat;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -30,6 +32,17 @@ impl Store {
         conn.execute_batch(migration_004)?;
         let migration_005 = include_str!("../../migrations/005_outcome_log.sql");
         conn.execute_batch(migration_005)?;
+        let migration_006 = include_str!("../../migrations/006_projects_and_chat.sql");
+        conn.execute_batch(migration_006)?;
+
+        // Add session_type and project_id columns (idempotent)
+        conn.execute_batch(
+            "ALTER TABLE terminal_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'terminal';"
+        ).ok();
+        conn.execute_batch(
+            "ALTER TABLE terminal_sessions ADD COLUMN project_id TEXT REFERENCES projects(id);"
+        ).ok();
+
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
         })

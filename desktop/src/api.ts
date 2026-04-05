@@ -1,3 +1,5 @@
+import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier } from "./types";
+
 export function wsUrlFromHttp(baseUrl: string) {
   if (baseUrl.startsWith("https://")) return baseUrl.replace("https://", "wss://") + "/ws";
   if (baseUrl.startsWith("http://")) return baseUrl.replace("http://", "ws://") + "/ws";
@@ -60,4 +62,44 @@ export async function removeHostApi(
   hostId: string,
 ): Promise<void> {
   await fetch(`${daemonUrl}/api/hosts/${hostId}`, { method: "DELETE" });
+}
+
+export async function listPermissions(daemonUrl: string): Promise<PeerPermissionRecord[]> {
+  return api<PeerPermissionRecord[]>(daemonUrl, "/api/permissions");
+}
+
+export async function setPermission(
+  daemonUrl: string,
+  hostId: string,
+  tier: PermissionTier,
+): Promise<{ hostId: string; tier: string }> {
+  return api(daemonUrl, `/api/hosts/${hostId}/permissions`, {
+    method: "PUT",
+    body: JSON.stringify({ tier }),
+  });
+}
+
+export async function listApprovals(
+  daemonUrl: string,
+  status?: string,
+): Promise<PendingApprovalRecord[]> {
+  const query = status ? `?status=${status}` : "";
+  return api<PendingApprovalRecord[]>(daemonUrl, `/api/approvals${query}`);
+}
+
+export async function getApproval(
+  daemonUrl: string,
+  approvalId: string,
+): Promise<PendingApprovalRecord> {
+  return api<PendingApprovalRecord>(daemonUrl, `/api/approvals/${approvalId}`);
+}
+
+export async function resolveApproval(
+  daemonUrl: string,
+  approvalId: string,
+  action: "approve" | "deny",
+): Promise<{ status: string }> {
+  return api(daemonUrl, `/api/approvals/${approvalId}/${action}`, {
+    method: "PUT",
+  });
 }

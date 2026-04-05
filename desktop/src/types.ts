@@ -182,3 +182,28 @@ export type HostConnection = {
   conversations: Conversation[] | null;
   systemStatus: SystemStatus | null;
 };
+
+// --- Peer permissions types (Phase 2d) ---
+
+export type PermissionTier = "full-access" | "approval-required" | "read-only" | "no-access";
+
+export type PeerPermissionRecord = {
+  hostId: string;
+  hostName: string;
+  tailscaleIp: string;
+  tier: PermissionTier;
+  updatedAt: string;
+};
+
+export type PendingApprovalRecord = {
+  id: string;
+  hostId: string;
+  method: string;
+  path: string;
+  bodyJson: string | null;
+  status: "pending" | "approved" | "denied" | "expired";
+  createdAt: string;
+  resolvedAt: string | null;
+  expiresAt: string;
+  resultJson: string | null;
+};

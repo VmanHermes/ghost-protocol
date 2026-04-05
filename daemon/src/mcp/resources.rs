@@ -96,6 +96,15 @@ impl ResourceBuilder {
         let hosts_data = self.network_hosts().await?;
         let sessions_data = self.terminal_sessions().await?;
 
+        let perms_data: Value = match self.client()
+            .get(format!("{}/api/permissions", self.base()))
+            .send()
+            .await
+        {
+            Ok(resp) => resp.json().await.unwrap_or(json!([])),
+            Err(_) => json!([]),
+        };
+
         let hostname = info["hostname"].as_str().unwrap_or("this machine");
         let tailscale_ip = info["tailscaleIp"].as_str().unwrap_or("unknown");
         let ssh_user = info["tools"]["sshUser"].as_str().unwrap_or("user");
@@ -134,7 +143,14 @@ impl ResourceBuilder {
                     .map(|r| format!("{r:.0}GB RAM"))
                     .unwrap_or_else(|| "? RAM".to_string());
                 let hstatus = h["status"].as_str().unwrap_or("unknown");
-                lines.push(format!("- {name} ({ip}): {hgpu}, {hram} [{hstatus}]"));
+
+                // Find tier for this host from perms_data
+                let tier = perms_data.as_array()
+                    .and_then(|arr| arr.iter().find(|p| p["tailscaleIp"].as_str() == Some(ip)))
+                    .and_then(|p| p["tier"].as_str())
+                    .unwrap_or("no-access");
+
+                lines.push(format!("- {name} ({ip}): {hgpu}, {hram} [{hstatus}] — {tier}"));
             }
         }
 
@@ -176,6 +192,28 @@ impl ResourceBuilder {
                         lines.push(format!("  ssh {ssh_user}@{ip} ollama run <model>   # run inference on GPU"));
                     }
                 }
+            }
+        }
+
+        // Permission notes
+        if let Some(perms) = perms_data.as_array() {
+            let restricted: Vec<String> = perms
+                .iter()
+                .filter(|p| p["tier"].as_str() != Some("full-access"))
+                .filter_map(|p| {
+                    let name = p["hostName"].as_str()?;
+                    let tier = p["tier"].as_str()?;
+                    Some(format!("  {name}: {tier}"))
+                })
+                .collect();
+
+            if !restricted.is_empty() {
+                lines.push("\nPermission restrictions:".to_string());
+                for line in restricted {
+                    lines.push(line);
+                }
+                lines.push("Peers with 'read-only' cannot create sessions or send input.".to_string());
+                lines.push("Peers with 'approval-required' will have write operations queued for owner approval.".to_string());
             }
         }
 

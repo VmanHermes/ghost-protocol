@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod cpu;
 pub mod gpu;
 pub mod processes;
@@ -13,6 +14,7 @@ pub struct ToolsInfo {
     pub hermes: Option<String>,
     pub ollama: Option<String>,
     pub ssh_user: String,
+    pub agents: Vec<agents::AgentInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +64,7 @@ pub fn collect_machine_info() -> MachineInfo {
         .map(|_| "http://localhost:11434".to_string());
 
     let ssh_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+    let detected_agents = agents::detect_agents();
 
     MachineInfo {
         hostname: sys_info.hostname,
@@ -75,6 +78,7 @@ pub fn collect_machine_info() -> MachineInfo {
             hermes: hermes_path,
             ollama: ollama_endpoint,
             ssh_user,
+            agents: detected_agents,
         },
     }
 }

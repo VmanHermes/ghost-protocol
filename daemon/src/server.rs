@@ -65,11 +65,15 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
                         let status = match client.get(&url).send().await {
                             Ok(resp) if resp.status().is_success() => {
                                 let caps = resp.json::<serde_json::Value>().await.ok().map(|v| {
+                                    let agents_data: Option<Vec<crate::hardware::agents::AgentInfo>> = v["tools"]["agents"]
+                                        .as_array()
+                                        .map(|arr| arr.iter().filter_map(|a| serde_json::from_value(a.clone()).ok()).collect());
                                     crate::store::hosts::HostCapabilities {
                                         gpu: v["gpu"]["model"].as_str().map(|s| s.to_string()),
                                         ram_gb: v["ramGb"].as_f64(),
                                         hermes: v["tools"]["hermes"].is_string(),
                                         ollama: v["tools"]["ollama"].is_string(),
+                                        agents: agents_data,
                                     }
                                 });
                                 store.update_host_status(&host.id, "online", caps.as_ref()).ok();

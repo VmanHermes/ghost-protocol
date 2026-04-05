@@ -23,6 +23,7 @@ pub struct HostCapabilities {
     pub ram_gb: Option<f64>,
     pub hermes: bool,
     pub ollama: bool,
+    pub agents: Option<Vec<crate::hardware::agents::AgentInfo>>,
 }
 
 impl Store {
@@ -156,6 +157,7 @@ mod tests {
             ram_gb: Some(16.0),
             hermes: false,
             ollama: false,
+            agents: None,
         };
         store
             .update_host_status("h1", "online", Some(&caps))

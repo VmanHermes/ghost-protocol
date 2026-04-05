@@ -49,6 +49,8 @@ struct WsMessage {
     after_chunk_id: Option<i64>,
     #[serde(default)]
     input: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
     #[serde(default, rename = "appendNewline")]
     append_newline: Option<bool>,
     #[serde(default)]
@@ -331,6 +333,41 @@ async fn handle_op(
                 }
                 Err(e) => send_error(socket, &format!("terminate error: {e}")).await,
             }
+        }
+
+        "subscribe_chat" => {
+            let Some(session_id) = msg.session_id else {
+                return send_error(socket, "subscribe_chat requires sessionId").await;
+            };
+            match state.store.list_chat_messages(&session_id, None, 1000) {
+                Ok(messages) => {
+                    for m in &messages {
+                        let reply = serde_json::json!({ "op": "chat_message", "message": m });
+                        send_json(socket, &reply).await?;
+                    }
+                }
+                Err(e) => return send_error(socket, &format!("db error: {e}")).await,
+            }
+            let reply = serde_json::json!({ "op": "subscribed_chat", "sessionId": session_id });
+            send_json(socket, &reply).await
+        }
+
+        "send_chat_message" => {
+            if tier < crate::middleware::permissions::PeerTier::FullAccess {
+                return send_error(socket, "write operations require full-access tier").await;
+            }
+            let Some(session_id) = msg.session_id else {
+                return send_error(socket, "send_chat_message requires sessionId").await;
+            };
+            let Some(content) = msg.content else {
+                return send_error(socket, "send_chat_message requires content").await;
+            };
+            let msg_id = uuid::Uuid::new_v4().to_string();
+            state.store.create_chat_message(&msg_id, &session_id, "user", &content).ok();
+            if let Err(e) = state.manager.send_input(&session_id, content.as_bytes(), true).await {
+                return send_error(socket, &format!("input error: {e}")).await;
+            }
+            Ok(())
         }
 
         other => {

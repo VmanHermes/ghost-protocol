@@ -1149,6 +1149,117 @@ pub async fn list_agents(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/chat/sessions
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateChatSessionBody {
+    pub agent_id: String,
+    pub project_id: Option<String>,
+    pub workdir: Option<String>,
+}
+
+pub async fn create_chat_session(
+    _tier: RequireFullAccess,
+    needs_approval: OptionalNeedsApproval,
+    client_ip: ClientIp,
+    State(state): State<AppState>,
+    Json(body): Json<CreateChatSessionBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    // Approval check
+    if needs_approval.0 {
+        let host_id = state.store.resolve_host_id_by_ip(&client_ip.0).ok().flatten().unwrap_or_default();
+        let id = uuid::Uuid::new_v4().to_string();
+        let expires_at = (chrono::Utc::now() + chrono::TimeDelta::seconds(120)).to_rfc3339();
+        let body_json = serde_json::to_string(&body).ok();
+        if let Ok(approval) = state.store.create_approval(&id, &host_id, "POST", "/api/chat/sessions", body_json.as_deref(), &expires_at) {
+            return Err((StatusCode::ACCEPTED, Json(serde_json::json!({
+                "approvalRequired": true, "approvalId": approval.id, "expiresAt": approval.expires_at
+            }))));
+        }
+    }
+
+    // Find agent
+    let agents = crate::hardware::agents::detect_agents();
+    let agent = agents.iter().find(|a| a.id == body.agent_id).ok_or_else(|| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("agent '{}' not found", body.agent_id) })))
+    })?.clone();
+
+    let workdir = body.workdir.clone().unwrap_or_else(|| {
+        std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+    });
+
+    // Create session with mode "chat"
+    let session = state.manager
+        .create_session("chat", Some(&agent.name), &workdir)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+
+    // System message
+    state.store.create_chat_message(
+        &uuid::Uuid::new_v4().to_string(), &session.id, "system",
+        &format!("Chat session started with {} in {}", agent.name, workdir),
+    ).ok();
+
+    // Outcome log
+    let source_host_id = state.store.resolve_host_id_by_ip(&client_ip.0).ok().flatten();
+    state.store.create_outcome(
+        &uuid::Uuid::new_v4().to_string(), "daemon", source_host_id.as_deref(),
+        "chat", "chat_session_created", Some(&agent.name), None, "success", None, None,
+        Some(&serde_json::json!({"agentId": body.agent_id, "workdir": workdir}).to_string()),
+    ).ok();
+
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "session": session, "agent": agent }))))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/chat/sessions/{id}/messages
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ChatMessagesQuery {
+    pub after: Option<String>,
+    pub limit: Option<usize>,
+}
+
+pub async fn list_chat_messages(
+    _tier: RequireReadOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<ChatMessagesQuery>,
+) -> Result<Json<Vec<crate::store::chat::ChatMessage>>, (StatusCode, Json<serde_json::Value>)> {
+    state.store.list_chat_messages(&id, params.after.as_deref(), params.limit.unwrap_or(100))
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/chat/sessions/{id}/message
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct SendChatMessageBody {
+    pub content: String,
+}
+
+pub async fn send_chat_message(
+    _tier: RequireFullAccess,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SendChatMessageBody>,
+) -> Result<Json<crate::store::chat::ChatMessage>, (StatusCode, Json<serde_json::Value>)> {
+    let msg = state.store.create_chat_message(
+        &uuid::Uuid::new_v4().to_string(), &id, "user", &body.content,
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))?;
+
+    state.manager.send_input(&id, body.content.as_bytes(), true).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+
+    Ok(Json(msg))
+}
+
+// ---------------------------------------------------------------------------
 // PUT /api/approvals/{id}/deny  (localhost-only)
 // ---------------------------------------------------------------------------
 

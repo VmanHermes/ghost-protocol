@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use serde::Serialize;
+use serde_json;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,4 +36,55 @@ pub fn is_ssh_available() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TailscalePeer {
+    pub name: String,
+    pub ip: String,
+    pub online: bool,
+}
+
+pub fn list_tailscale_peers() -> Vec<TailscalePeer> {
+    let output = match Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return vec![],
+    };
+
+    let json: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+
+    let peers = match json.get("Peer").and_then(|p| p.as_object()) {
+        Some(p) => p,
+        None => return vec![],
+    };
+
+    let mut result = Vec::new();
+    for (_key, peer) in peers {
+        let name = peer["HostName"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+        let online = peer["Online"].as_bool().unwrap_or(false);
+
+        let ip = peer["TailscaleIPs"]
+            .as_array()
+            .and_then(|ips| {
+                ips.iter()
+                    .filter_map(|v| v.as_str())
+                    .find(|s| !s.contains(':'))
+                    .map(|s| s.to_string())
+            });
+
+        if let Some(ip) = ip {
+            result.push(TailscalePeer { name, ip, online });
+        }
+    }
+    result
 }

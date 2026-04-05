@@ -2,7 +2,7 @@
 
 ## Vision
 
-A unified control plane for the Hermes AI agent across all your devices. Host terminal and chat sessions on any Linux machine, join from any other device on your Tailscale mesh, and eventually from iPhone.
+A unified control plane for AI agents across all your devices. Run terminals, chat with agents, and develop remotely on any machine in your Tailscale mesh. Agent-agnostic — works with Claude Code, Hermes, Ollama, and any runtime discoverable on the network.
 
 ## Current status: v0.2.1
 
@@ -103,33 +103,45 @@ Terminal sharing, local PTY, multi-host connections over Tailscale.
 
 ---
 
-## Phase 3: Intelligence + Chat
+## Phase 3 (next): Agent Chat, Remote Dev, Observability
 
-**Goal:** Make agents smarter about the mesh and wire up the chat interface.
+**Goal:** Three high-value features that fundamentally change how you interact with the mesh — chat with any agent on any machine, develop remotely via code-server, and observe all agents in real time.
 
-### 3a: Distribution Advisor
+### 3a: Agent Chat (high priority)
 
-- LLM with RAG over the outcome log
-- Suggests which machine to route work to based on historical performance, current load, and capabilities
-- Exposed as MCP tool: `ghost_route_advice`
+Multi-agent chat interface — not hardwired to Hermes, but discovers available agents on each connected machine.
 
-### 3b: Behavioral Oversight ("Police" LLM)
-
-- Monitors inter-agent communication patterns
-- Flags anomalies (repeated write attempts from low-trust peers, unusual request patterns)
-- Could auto-downgrade tiers or enforce rate limits
-
-### 3c: Chat interface
-
-- Chat UI wired to Hermes runtime
+- On startup (and periodically), each daemon probes its machine for available agent runtimes (Claude Code, Hermes, Ollama, etc.)
+- Agents are advertised as capabilities in the host registry (like GPU/RAM today)
+- Chat UI lets you pick a machine + agent and start a conversation
 - Conversation/message persistence in daemon SQLite
-- Agent run lifecycle visible in desktop app
+- WebSocket streaming for real-time agent responses
+- Chat sessions tied to machines — "talk to Claude on shared-host" or "talk to Hermes on laptop"
+
+### 3b: Remote code-server (high priority)
+
+Run code-server (VS Code in browser) on machine A, access it from machine B via Ghost Protocol.
+
+- Daemon can start/stop code-server instances on the host machine
+- Sessions exposed in the desktop app alongside terminal sessions
+- Tunneled through Tailscale — no port forwarding or public exposure needed
+- code-server lifecycle managed like terminal sessions (create, monitor, terminate)
+
+### 3c: Agent Observability (high priority)
+
+Real-time view of all agents running across the mesh — what they're doing, resource usage, status.
+
+- Right panel (currently approvals-only) expands to show active agents across all connected machines
+- Each agent entry: name, machine, status (running/idle/error), current task, token usage, duration
+- Agent events streamed via WebSocket from each connected daemon
+- Click an agent to see its conversation/output stream
+- Ties into the outcome log — completed agent work appears as outcomes
 
 ### 3d: Session exit detection
 
 - Detect natural session exits (PTY EOF) with exit codes
 - Auto-capture `session_exited` outcomes with duration and exit code
-- Richer data for distribution advisor
+- Richer data for future intelligence layers
 
 ---
 
@@ -141,7 +153,6 @@ Terminal sharing, local PTY, multi-host connections over Tailscale.
 - Push notifications for agent events and approval requests
 - Remote screenshots
 - Tailscale ACL integration beyond CIDR allowlisting
-- Subagent tree reconstruction from delegated runs
 
 ---
 
@@ -156,9 +167,34 @@ Terminal sharing, local PTY, multi-host connections over Tailscale.
 
 ---
 
+## Experimental / TBD
+
+Ideas with potential but not yet prioritized. May be promoted to a phase when real usage patterns clarify their value.
+
+### Distribution Advisor
+
+- LLM with RAG over the outcome log
+- Suggests which machine to route work to based on historical performance, current load, and capabilities
+- Exposed as MCP tool: `ghost_route_advice`
+- **Depends on:** sufficient outcome log data to be useful
+
+### Behavioral Oversight ("Police" LLM)
+
+- Monitors inter-agent communication patterns
+- Flags anomalies (repeated write attempts from low-trust peers, unusual request patterns)
+- Could auto-downgrade tiers or enforce rate limits
+- **Depends on:** multi-agent chat being active to have patterns to monitor
+
+### Subagent tree reconstruction
+
+- Reconstruct agent delegation trees from run events
+- Visualize which agent spawned which sub-agent and their outcomes
+
+---
+
 ## Architecture principles
 
-- **Hermes runtime stays headless** — Ghost Protocol wraps it, doesn't replace it
+- **Agent-agnostic** — Ghost Protocol discovers and wraps any agent runtime, doesn't replace them
 - **Daemon is the source of truth** — all state flows through the Rust daemon
 - **Tailscale for networking** — WireGuard-encrypted mesh, no HTTPS certificates needed for security
 - **Desktop app is a thin client** — Tauri 2 + React, talks to daemon over HTTP + WebSocket

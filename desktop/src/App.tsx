@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "./lib/platform";
 import { api, listHosts, addHostApi, removeHostApi, listDiscoveries, acceptDiscovery, dismissDiscovery, type ApiHost } from "./api";
 import { appLog } from "./log";
 import type {
@@ -134,7 +134,7 @@ function App() {
   // Auto-spawn a local terminal on first mount
   const localSpawnedRef = useRef(false);
   useEffect(() => {
-    if (localSpawnedRef.current) return;
+    if (localSpawnedRef.current || !isTauri()) return;
     localSpawnedRef.current = true;
     void handleCreateLocalSession();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -240,7 +240,9 @@ function App() {
   }, [activeHostId, activeHostUrl, activeTerminalSessionId, updateConnection]);
 
   const handleCreateLocalSession = useCallback(async () => {
+    if (!isTauri()) return;
     try {
+      const { invoke } = await import("@tauri-apps/api/core");
       const cols = 120;
       const rows = 30;
       const sessionId = await invoke<string>("pty_spawn", { cols, rows, workdir: null });
@@ -266,9 +268,11 @@ function App() {
   }, []);
 
   const handleKillLocalSession = useCallback(async (sessionId: string) => {
+    if (!isTauri()) return;
     const existing = localSessions.find((s) => s.id === sessionId);
     if (!existing || existing.status !== "running") return;
     try {
+      const { invoke } = await import("@tauri-apps/api/core");
       await invoke("pty_kill", { sessionId });
       setLocalSessions((prev) =>
         prev.map((s) => (s.id === sessionId ? { ...s, status: "terminated" as const } : s)),

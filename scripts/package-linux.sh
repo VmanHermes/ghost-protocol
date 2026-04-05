@@ -15,6 +15,10 @@ echo "==> Building daemon..."
 cd "$ROOT_DIR/daemon"
 cargo build --release 2>&1 | tail -10
 
+echo "==> Building CLI..."
+cd "$ROOT_DIR/cli"
+cargo build --release 2>&1 | tail -10
+
 echo "==> Building app (frontend + Rust)..."
 cd "$ROOT_DIR/desktop"
 npx tauri build --bundles deb 2>&1 | tail -20
@@ -28,6 +32,9 @@ cp "$ROOT_DIR/desktop/src-tauri/target/release/ghost_protocol" "$DIST_DIR/ghost-
 
 # Daemon binary
 cp "$ROOT_DIR/daemon/target/release/ghost-protocol-daemon" "$DIST_DIR/ghost-protocol-daemon"
+
+# CLI binary
+cp "$ROOT_DIR/cli/target/release/ghost" "$DIST_DIR/ghost"
 
 # Icon
 cp "$ROOT_DIR/desktop/src-tauri/icons/icon.png" "$DIST_DIR/ghost-protocol.png"
@@ -66,6 +73,7 @@ fi
 echo "==> Installing Ghost Protocol..."
 sudo install -Dm755 "$SCRIPT_DIR/ghost-protocol" /usr/local/bin/ghost-protocol
 sudo install -Dm755 "$SCRIPT_DIR/ghost-protocol-daemon" /usr/local/bin/ghost-protocol-daemon
+sudo install -Dm755 "$SCRIPT_DIR/ghost" /usr/local/bin/ghost
 sudo install -Dm644 "$SCRIPT_DIR/ghost-protocol.png" /usr/local/share/icons/ghost-protocol.png
 sudo install -Dm644 "$SCRIPT_DIR/ghost-protocol.desktop" /usr/share/applications/ghost-protocol.desktop
 
@@ -80,6 +88,7 @@ set -euo pipefail
 echo "==> Removing Ghost Protocol..."
 sudo rm -f /usr/local/bin/ghost-protocol
 sudo rm -f /usr/local/bin/ghost-protocol-daemon
+sudo rm -f /usr/local/bin/ghost
 sudo rm -f /usr/local/share/icons/ghost-protocol.png
 sudo rm -f /usr/share/applications/ghost-protocol.desktop
 echo "==> Done."

@@ -55,32 +55,14 @@ export function useLocalTerminal({
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
   useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
 
-  // Flush buffered chunks + inject welcome text when terminal becomes available
-  const welcomeShownRef = useRef(false);
+  // Flush buffered chunks when terminal becomes available
   useEffect(() => {
     if (!isActive) return;
     const terminal = terminalRef.current;
     if (!terminal) return;
 
-    // Inject welcome text once
-    if (!welcomeShownRef.current) {
-      welcomeShownRef.current = true;
-      terminal.write(
-        "\x1b[2m" +
-        "Ghost Protocol — Developer Console\r\n" +
-        "\r\n" +
-        "Commands:\r\n" +
-        "  ghost init          Set up a project in this directory\r\n" +
-        "  ghost status        Mesh overview (machines, sessions)\r\n" +
-        "  ghost agents        Available agents across the mesh\r\n" +
-        "  ghost chat <agent>  Start a chat with an agent\r\n" +
-        "  ghost projects      Registered projects\r\n" +
-        "  ghost help          Full command reference\r\n" +
-        "\x1b[0m\r\n"
-      );
-    }
-
     if (chunkBufferRef.current.length > 0) {
+      appLog.info(SRC, `Flushing ${chunkBufferRef.current.length} buffered chunks`);
       for (const data of chunkBufferRef.current) {
         terminal.write(data);
       }
@@ -101,10 +83,26 @@ export function useLocalTerminal({
 
     appLog.info(SRC, `Attaching to PTY session ${currentSessionId.slice(0, 8)}`);
 
-    // Reset terminal for fresh session
+    // Reset terminal for fresh session and inject welcome text
     if (isActiveRef.current) {
       const terminal = terminalRef.current;
-      if (terminal) terminal.reset();
+      if (terminal) {
+        terminal.reset();
+        terminal.write(
+          "\x1b[2m" +
+          "Ghost Protocol — Developer Console\r\n" +
+          "\r\n" +
+          "Commands:\r\n" +
+          "  ghost init          Set up a project in this directory\r\n" +
+          "  ghost status        Mesh overview (machines, sessions)\r\n" +
+          "  ghost agents        Available agents across the mesh\r\n" +
+          "  ghost chat <agent>  Start a chat with an agent\r\n" +
+          "  ghost projects      Registered projects\r\n" +
+          "  ghost help          Full command reference\r\n" +
+          "\x1b[0m\r\n"
+        );
+        appLog.info(SRC, "Welcome text injected");
+      }
     }
     chunkBufferRef.current = [];
 
@@ -117,6 +115,7 @@ export function useLocalTerminal({
     setIsConnected(true);
 
     // Listen for pty:chunk events
+    appLog.info(SRC, `Setting up chunk listener for ${currentSessionId.slice(0, 8)}`);
     const chunkUnlisten = listen<PtyChunkPayload>("pty:chunk", (event) => {
       if (cancelled || event.payload.session_id !== currentSessionId) return;
       if (isActiveRef.current) {
@@ -124,9 +123,11 @@ export function useLocalTerminal({
         if (term) {
           term.write(event.payload.data);
         } else {
+          appLog.info(SRC, `Buffering chunk (no terminal yet), len=${event.payload.data.length}`);
           chunkBufferRef.current.push(event.payload.data);
         }
       } else {
+        appLog.info(SRC, `Buffering chunk (not active), len=${event.payload.data.length}`);
         chunkBufferRef.current.push(event.payload.data);
       }
     });

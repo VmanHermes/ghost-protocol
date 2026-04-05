@@ -411,17 +411,36 @@ pub async fn terminate_session(
         }
     }
 
-    state
+    let result = state
         .manager
         .terminate_session(&id)
         .await
-        .map(|rec| Json(serde_json::to_value(rec).unwrap_or_default()))
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e })),
             )
-        })
+        })?;
+
+    // Auto-capture outcome
+    let source_host_id = state.store.resolve_host_id_by_ip(&client_ip.0).ok().flatten();
+    let duration_secs = chrono::DateTime::parse_from_rfc3339(&result.created_at).ok()
+        .map(|created| (chrono::Utc::now() - created.with_timezone(&chrono::Utc)).num_seconds() as f64);
+    state.store.create_outcome(
+        &uuid::Uuid::new_v4().to_string(),
+        "daemon",
+        source_host_id.as_deref(),
+        "terminal",
+        "session_terminated",
+        None,
+        None,
+        "cancelled",
+        None,
+        duration_secs,
+        None,
+    ).ok(); // fire-and-forget
+
+    Ok(Json(serde_json::to_value(result).unwrap_or_default()))
 }
 
 // ---------------------------------------------------------------------------

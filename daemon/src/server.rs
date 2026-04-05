@@ -152,6 +152,7 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/discoveries", get(http::list_discoveries))
         .route("/api/discoveries/{ip}/accept", axum::routing::put(http::accept_discovery))
         .route("/api/discoveries/{ip}/dismiss", axum::routing::put(http::dismiss_discovery))
+        .route("/api/outcomes", get(http::list_outcomes).post(http::create_outcome))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
         .layer(middleware::from_fn_with_state(store_for_guard, tailscale_guard))

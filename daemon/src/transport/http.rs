@@ -155,22 +155,35 @@ pub async fn create_session(
         }
     }
 
-    state
+    let rec = state
         .manager
         .create_session(&body.mode, body.name.as_deref(), &body.workdir)
         .await
-        .map(|rec| {
-            (
-                StatusCode::CREATED,
-                Json(serde_json::to_value(rec).unwrap_or_default()),
-            )
-        })
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e })),
             )
-        })
+        })?;
+
+    // Auto-capture outcome
+    let source_host_id = state.store.resolve_host_id_by_ip(&client_ip.0).ok().flatten();
+    let metadata = serde_json::json!({ "mode": body.mode, "workdir": body.workdir });
+    state.store.create_outcome(
+        &uuid::Uuid::new_v4().to_string(),
+        "daemon",
+        source_host_id.as_deref(),
+        "terminal",
+        "session_created",
+        body.name.as_deref(),
+        None,
+        "success",
+        None,
+        None,
+        Some(&serde_json::to_string(&metadata).unwrap_or_default()),
+    ).ok(); // fire-and-forget
+
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(rec).unwrap_or_default())))
 }
 
 // ---------------------------------------------------------------------------
@@ -940,6 +953,82 @@ pub async fn dismiss_discovery(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
     })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/outcomes (read-only and above)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOutcomeBody {
+    pub category: String,
+    pub action: String,
+    pub description: Option<String>,
+    pub target_machine: Option<String>,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub duration_secs: Option<f64>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+pub async fn create_outcome(
+    _tier: RequireReadOnly,
+    client_ip: ClientIp,
+    State(state): State<AppState>,
+    Json(body): Json<CreateOutcomeBody>,
+) -> Result<(StatusCode, Json<crate::store::outcomes::OutcomeRecord>), (StatusCode, Json<serde_json::Value>)> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let source_host_id = state.store.resolve_host_id_by_ip(&client_ip.0).ok().flatten();
+    let metadata_json = body.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+
+    let record = state.store.create_outcome(
+        &id,
+        "agent",
+        source_host_id.as_deref(),
+        &body.category,
+        &body.action,
+        body.description.as_deref(),
+        body.target_machine.as_deref(),
+        &body.status,
+        body.exit_code,
+        body.duration_secs,
+        metadata_json.as_deref(),
+    ).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?;
+
+    Ok((StatusCode::CREATED, Json(record)))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/outcomes (localhost-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct OutcomesQuery {
+    #[serde(default = "default_outcomes_limit")]
+    pub limit: usize,
+    pub category: Option<String>,
+    pub status: Option<String>,
+}
+
+fn default_outcomes_limit() -> usize {
+    50
+}
+
+pub async fn list_outcomes(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Query(params): Query<OutcomesQuery>,
+) -> Result<Json<Vec<crate::store::outcomes::OutcomeRecord>>, (StatusCode, Json<serde_json::Value>)> {
+    state
+        .store
+        .list_outcomes(params.limit, params.category.as_deref(), params.status.as_deref())
+        .map(Json)
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+        })
 }
 
 // ---------------------------------------------------------------------------

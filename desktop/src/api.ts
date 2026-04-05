@@ -1,4 +1,4 @@
-import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier } from "./types";
+import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier, DiscoveredPeer } from "./types";
 
 export function wsUrlFromHttp(baseUrl: string) {
   if (baseUrl.startsWith("https://")) return baseUrl.replace("https://", "wss://") + "/ws";
@@ -102,4 +102,24 @@ export async function resolveApproval(
   return api(daemonUrl, `/api/approvals/${approvalId}/${action}`, {
     method: "PUT",
   });
+}
+
+export async function listDiscoveries(daemonUrl: string): Promise<DiscoveredPeer[]> {
+  return api<DiscoveredPeer[]>(daemonUrl, "/api/discoveries");
+}
+
+export async function acceptDiscovery(
+  daemonUrl: string,
+  ip: string,
+): Promise<ApiHost> {
+  return api<ApiHost>(daemonUrl, `/api/discoveries/${ip}/accept`, {
+    method: "PUT",
+  });
+}
+
+export async function dismissDiscovery(
+  daemonUrl: string,
+  ip: string,
+): Promise<void> {
+  await fetch(`${daemonUrl}/api/discoveries/${ip}/dismiss`, { method: "PUT" });
 }

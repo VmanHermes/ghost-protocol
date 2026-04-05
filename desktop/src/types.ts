@@ -207,3 +207,11 @@ export type PendingApprovalRecord = {
   expiresAt: string;
   resultJson: string | null;
 };
+
+// --- Discovery types (Phase 2e) ---
+
+export type DiscoveredPeer = {
+  tailscaleIp: string;
+  name: string;
+  discoveredAt: string;
+};

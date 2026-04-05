@@ -1,1 +1,0 @@
-/home/vman/projects/personal/ghost-protocol/cli/target/debug/ghost: /home/vman/projects/personal/ghost-protocol/cli/src/commands.rs /home/vman/projects/personal/ghost-protocol/cli/src/detect.rs /home/vman/projects/personal/ghost-protocol/cli/src/init.rs /home/vman/projects/personal/ghost-protocol/cli/src/main.rs

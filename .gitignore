@@ -22,3 +22,4 @@ dist/
 
 # Rust / daemon
 daemon/target/
+.worktrees/

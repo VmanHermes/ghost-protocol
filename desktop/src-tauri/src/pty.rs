@@ -92,22 +92,26 @@ impl PtyManager {
             .map_err(|e| format!("Failed to clone reader: {e}"))?;
 
         std::thread::spawn(move || {
-            // Emit welcome text as the very first chunk — before any shell output
+            // Brief pause to let the frontend attach its event listener.
+            // Without this, the welcome text and early shell output are lost
+            // because Tauri's listen() is async and resolves after pty_spawn returns.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Emit welcome text as the very first chunk
             let hostname = std::process::Command::new("hostname")
                 .output()
                 .ok()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             let welcome = format!(
-                "\x1b[2mGhost Protocol — {hostname}\r\n\
-                \r\n\
-                Commands:\r\n\
-                  ghost init          Set up a project in this directory\r\n\
-                  ghost status        Mesh overview (machines, sessions)\r\n\
-                  ghost agents        Available agents across the mesh\r\n\
-                  ghost chat <agent>  Start a chat with an agent\r\n\
-                  ghost help          Full command reference\r\n\
-                \x1b[0m\r\n"
+                "\x1b[2mGhost Protocol — {hostname}\r\n\r\n\
+Commands:\r\n\
+  ghost init          Set up a project in this directory\r\n\
+  ghost status        Mesh overview (machines, sessions)\r\n\
+  ghost agents        Available agents across the mesh\r\n\
+  ghost chat <agent>  Start a chat with an agent\r\n\
+  ghost help          Full command reference\r\n\
+\x1b[0m\r\n"
             );
             let _ = reader_app.emit(
                 "pty:chunk",

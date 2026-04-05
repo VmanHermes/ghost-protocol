@@ -188,9 +188,9 @@ export function TerminalWorkspace({
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: false,
-      fontFamily: 'SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: '"JetBrainsMono NF", "JetBrains Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
       fontSize: 14,
-      letterSpacing: -1,
+      letterSpacing: 0,
       lineHeight: 1.0,
       theme: {
         background: "#1a1f36",

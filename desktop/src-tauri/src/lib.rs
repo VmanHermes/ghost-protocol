@@ -37,6 +37,13 @@ fn pty_kill(state: State<'_, PtyManager>, session_id: String) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Disable DMA-BUF renderer on Linux to avoid Wayland/WebKit crashes
+    // on certain GPU/driver combinations (e.g. NVIDIA, older Intel).
+    #[cfg(target_os = "linux")]
+    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(PtyManager::new())

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ghost-daemon": {
+      "type": "stdio",
+      "command": "ghost-protocol-daemon",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
+    }
+  }
+}

@@ -1,6 +1,7 @@
 pub mod sessions;
 pub mod chunks;
 pub mod hosts;
+pub mod permissions;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,8 @@ impl Store {
         conn.execute_batch(migration_001)?;
         let migration_002 = include_str!("../../migrations/002_known_hosts.sql");
         conn.execute_batch(migration_002)?;
+        let migration_003 = include_str!("../../migrations/003_peer_permissions.sql");
+        conn.execute_batch(migration_003)?;
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
         })

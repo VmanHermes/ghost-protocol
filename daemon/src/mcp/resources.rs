@@ -60,6 +60,29 @@ impl ResourceBuilder {
         Ok(json!({ "sessions": resp }))
     }
 
+    pub async fn available_agents(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        let local_info = self.machine_info().await?;
+        let local_agents = local_info["tools"]["agents"].clone();
+        let hosts_data = self.network_hosts().await?;
+
+        let mut peers = serde_json::Map::new();
+        if let Some(hosts) = hosts_data["hosts"].as_array() {
+            for h in hosts {
+                let name = h["name"].as_str().unwrap_or("?");
+                let agents = h.get("capabilities")
+                    .and_then(|c| c.get("agents"))
+                    .cloned()
+                    .unwrap_or(json!([]));
+                peers.insert(name.to_string(), agents);
+            }
+        }
+
+        Ok(json!({
+            "local": local_agents,
+            "peers": peers,
+        }))
+    }
+
     pub async fn agent_hints(&self) -> Result<Value, Box<dyn std::error::Error>> {
         let info = self.machine_info().await?;
 
@@ -242,6 +265,31 @@ impl ResourceBuilder {
             }
         }
 
+        // Available agents on this machine
+        let local_agents_data = self.machine_info().await.unwrap_or(json!({}));
+        if let Some(agents) = local_agents_data["tools"]["agents"].as_array() {
+            if !agents.is_empty() {
+                let agent_names: Vec<&str> = agents.iter()
+                    .filter_map(|a| a["name"].as_str())
+                    .collect();
+                lines.push(format!("\nAvailable agents on {hostname}: {}", agent_names.join(", ")));
+            }
+        }
+        // Agents on peer machines
+        if let Some(hosts) = hosts_data["hosts"].as_array() {
+            for h in hosts {
+                if let Some(peer_agents) = h.get("capabilities").and_then(|c| c["agents"].as_array()) {
+                    if !peer_agents.is_empty() {
+                        let name = h["name"].as_str().unwrap_or("?");
+                        let agent_names: Vec<&str> = peer_agents.iter()
+                            .filter_map(|a| a["name"].as_str())
+                            .collect();
+                        lines.push(format!("Available agents on {name}: {}", agent_names.join(", ")));
+                    }
+                }
+            }
+        }
+
         // Tool instructions
         lines.push("\nAvailable Ghost Protocol tools:".to_string());
         lines.push("  - ghost_report_outcome: Report what you did and the result after completing work".to_string());
@@ -355,6 +403,12 @@ impl ResourceBuilder {
                 "uri": "ghost://outcomes/recent",
                 "name": "Recent Outcomes",
                 "description": "Recent action outcomes across the mesh: what was done, where, and whether it succeeded",
+                "mimeType": "application/json"
+            }),
+            json!({
+                "uri": "ghost://agents/available",
+                "name": "Available Agents",
+                "description": "Agent runtimes available across the mesh: which agents can run where",
                 "mimeType": "application/json"
             }),
         ]

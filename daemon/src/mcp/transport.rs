@@ -183,6 +183,14 @@ async fn read_resource(
                 "text": serde_json::to_string_pretty(&data)?
             }))
         }
+        "ghost://agents/available" => {
+            let data = builder.available_agents().await?;
+            Ok(json!({
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": serde_json::to_string_pretty(&data)?
+            }))
+        }
         _ => Err(format!("unknown resource: {uri}").into()),
     }
 }
@@ -224,6 +232,11 @@ fn tool_definitions() -> Value {
                 "properties": {},
                 "required": []
             }
+        },
+        {
+            "name": "ghost_list_agents",
+            "description": "List available agent runtimes across the mesh. Shows which agents (Claude Code, Ollama models, Hermes, etc.) are available on which machines.",
+            "inputSchema": { "type": "object", "properties": {}, "required": [] }
         }
     ])
 }
@@ -257,6 +270,10 @@ async fn call_tool(
         }
         "ghost_list_machines" => {
             let data = builder.list_machines().await?;
+            Ok(serde_json::to_string_pretty(&data)?)
+        }
+        "ghost_list_agents" => {
+            let data = builder.available_agents().await?;
             Ok(serde_json::to_string_pretty(&data)?)
         }
         _ => Err(format!("unknown tool: {name}").into()),

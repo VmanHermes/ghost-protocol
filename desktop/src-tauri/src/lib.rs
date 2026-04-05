@@ -2,7 +2,10 @@ mod pty;
 mod detect;
 
 use pty::PtyManager;
-use tauri::State;
+use std::sync::Mutex;
+use tauri::{Manager, State};
+use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::ShellExt;
 
 #[tauri::command]
 fn pty_spawn(
@@ -57,6 +60,57 @@ pub fn run() {
             detect::detect_package_manager,
             detect::detect_tailscale_ip,
         ])
+        .setup(|app| {
+            // Spawn the daemon sidecar
+            let sidecar = app
+                .shell()
+                .sidecar("binaries/ghost-protocol-daemon")
+                .map_err(|e| format!("failed to create daemon sidecar: {e}"))?;
+            let (mut rx, child) = sidecar
+                .spawn()
+                .map_err(|e| format!("failed to spawn daemon sidecar: {e}"))?;
+
+            // Store the child so we can kill it on exit
+            app.manage(Mutex::new(Some(child)));
+
+            // Log daemon output in background
+            tauri::async_runtime::spawn(async move {
+                use tauri_plugin_shell::process::CommandEvent;
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        CommandEvent::Stdout(line) => {
+                            let line = String::from_utf8_lossy(&line);
+                            eprintln!("[daemon stdout] {}", line);
+                        }
+                        CommandEvent::Stderr(line) => {
+                            let line = String::from_utf8_lossy(&line);
+                            eprintln!("[daemon stderr] {}", line);
+                        }
+                        CommandEvent::Terminated(status) => {
+                            eprintln!("[daemon] exited: {:?}", status);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            });
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Kill the daemon when the last window is destroyed
+            if let tauri::WindowEvent::Destroyed = event {
+                let app = window.app_handle();
+                if let Some(child_state) = app.try_state::<Mutex<Option<CommandChild>>>() {
+                    if let Ok(mut guard) = child_state.lock() {
+                        if let Some(child) = guard.take() {
+                            let _ = child.kill();
+                            eprintln!("[daemon] killed daemon sidecar on window close");
+                        }
+                    }
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

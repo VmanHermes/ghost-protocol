@@ -6,6 +6,9 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "core:event:default"
+    "core:event:default",
+    "shell:allow-execute",
+    "shell:allow-kill",
+    "shell:default"
   ]
 }

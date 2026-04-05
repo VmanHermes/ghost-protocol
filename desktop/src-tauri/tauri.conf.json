@@ -24,12 +24,29 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "binaries/ghost-protocol-daemon",
+      "binaries/ghost"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": [
+      "resources/web/**/*"
+    ],
+    "linux": {
+      "deb": {},
+      "appimage": {}
+    },
+    "macOS": {
+      "dmg": {}
+    },
+    "windows": {
+      "nsis": {}
+    }
   }
 }

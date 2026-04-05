@@ -46,6 +46,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(PtyManager::new())
         .invoke_handler(tauri::generate_handler![
             pty_spawn, pty_write, pty_resize, pty_kill,

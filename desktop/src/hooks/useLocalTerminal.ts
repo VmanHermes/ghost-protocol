@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Terminal } from "@xterm/xterm";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { appLog } from "../log";
+import { isTauri } from "../lib/platform";
 import type { LocalTerminalSession } from "../types";
 
 const SRC = "local-pty";
@@ -72,7 +71,7 @@ export function useLocalTerminal({
 
   // Main event listener lifecycle
   useEffect(() => {
-    if (!sessionId) {
+    if (!sessionId || !isTauri()) {
       setSessionMeta(null);
       setIsConnected(false);
       return;
@@ -98,45 +97,52 @@ export function useLocalTerminal({
     });
     setIsConnected(true);
 
-    // Listen for pty:chunk events
-    appLog.info(SRC, `Setting up chunk listener for ${currentSessionId.slice(0, 8)}`);
-    const chunkUnlisten = listen<PtyChunkPayload>("pty:chunk", (event) => {
-      if (cancelled || event.payload.session_id !== currentSessionId) return;
-      if (isActiveRef.current) {
-        const term = terminalRef.current;
-        if (term) {
-          term.write(event.payload.data);
+    let chunkUnlistenPromise: Promise<() => void> | undefined;
+    let statusUnlistenPromise: Promise<() => void> | undefined;
+
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+
+      // Listen for pty:chunk events
+      appLog.info(SRC, `Setting up chunk listener for ${currentSessionId.slice(0, 8)}`);
+      chunkUnlistenPromise = listen<PtyChunkPayload>("pty:chunk", (event) => {
+        if (cancelled || event.payload.session_id !== currentSessionId) return;
+        if (isActiveRef.current) {
+          const term = terminalRef.current;
+          if (term) {
+            term.write(event.payload.data);
+          } else {
+            appLog.info(SRC, `Buffering chunk (no terminal yet), len=${event.payload.data.length}`);
+            chunkBufferRef.current.push(event.payload.data);
+          }
         } else {
-          appLog.info(SRC, `Buffering chunk (no terminal yet), len=${event.payload.data.length}`);
+          appLog.info(SRC, `Buffering chunk (not active), len=${event.payload.data.length}`);
           chunkBufferRef.current.push(event.payload.data);
         }
-      } else {
-        appLog.info(SRC, `Buffering chunk (not active), len=${event.payload.data.length}`);
-        chunkBufferRef.current.push(event.payload.data);
-      }
-    });
+      });
 
-    // Listen for pty:status events
-    const statusUnlisten = listen<PtyStatusPayload>("pty:status", (event) => {
-      if (cancelled || event.payload.session_id !== currentSessionId) return;
-      const status = event.payload.status as LocalTerminalSession["status"];
-      appLog.info(SRC, `Session ${currentSessionId.slice(0, 8)} status: ${status} (exit_code=${event.payload.exit_code})`);
-      const updated: LocalTerminalSession = {
-        id: currentSessionId,
-        status,
-        createdAt: sessionCreatedAt,
-        exitCode: event.payload.exit_code,
-      };
-      setSessionMeta(updated);
-      setIsConnected(status === "running");
-      onStatusChangeRef.current?.(updated);
-    });
+      // Listen for pty:status events
+      statusUnlistenPromise = listen<PtyStatusPayload>("pty:status", (event) => {
+        if (cancelled || event.payload.session_id !== currentSessionId) return;
+        const status = event.payload.status as LocalTerminalSession["status"];
+        appLog.info(SRC, `Session ${currentSessionId.slice(0, 8)} status: ${status} (exit_code=${event.payload.exit_code})`);
+        const updated: LocalTerminalSession = {
+          id: currentSessionId,
+          status,
+          createdAt: sessionCreatedAt,
+          exitCode: event.payload.exit_code,
+        };
+        setSessionMeta(updated);
+        setIsConnected(status === "running");
+        onStatusChangeRef.current?.(updated);
+      });
+    })();
 
     return () => {
       cancelled = true;
       setIsConnected(false);
-      chunkUnlisten.then((unlisten) => unlisten());
-      statusUnlisten.then((unlisten) => unlisten());
+      chunkUnlistenPromise?.then((unlisten) => unlisten());
+      statusUnlistenPromise?.then((unlisten) => unlisten());
       appLog.info(SRC, `Detached from PTY session ${currentSessionId.slice(0, 8)}`);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,18 +150,22 @@ export function useLocalTerminal({
 
   const sendInput = useCallback((data: string) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
-    invoke("pty_write", { sessionId: sid, data }).catch((err: unknown) => {
-      appLog.error(SRC, `pty_write failed: ${err}`);
-      onErrorRef.current?.(`Failed to send input: ${err}`);
+    if (!sid || !isTauri()) return;
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke("pty_write", { sessionId: sid, data }).catch((err: unknown) => {
+        appLog.error(SRC, `pty_write failed: ${err}`);
+        onErrorRef.current?.(`Failed to send input: ${err}`);
+      });
     });
   }, []);
 
   const resize = useCallback((cols: number, rows: number) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
-    invoke("pty_resize", { sessionId: sid, cols, rows }).catch((err: unknown) => {
-      appLog.error(SRC, `pty_resize failed: ${err}`);
+    if (!sid || !isTauri()) return;
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke("pty_resize", { sessionId: sid, cols, rows }).catch((err: unknown) => {
+        appLog.error(SRC, `pty_resize failed: ${err}`);
+      });
     });
   }, []);
 
@@ -165,10 +175,13 @@ export function useLocalTerminal({
       onErrorRef.current?.("No active PTY session");
       return;
     }
+    if (!isTauri()) return;
     appLog.info(SRC, `Killing PTY session ${sid.slice(0, 8)}`);
-    invoke("pty_kill", { sessionId: sid }).catch((err: unknown) => {
-      appLog.error(SRC, `pty_kill failed: ${err}`);
-      onErrorRef.current?.(`Failed to kill session: ${err}`);
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke("pty_kill", { sessionId: sid }).catch((err: unknown) => {
+        appLog.error(SRC, `pty_kill failed: ${err}`);
+        onErrorRef.current?.(`Failed to kill session: ${err}`);
+      });
     });
   }, []);
 

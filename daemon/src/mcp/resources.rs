@@ -217,7 +217,42 @@ impl ResourceBuilder {
             }
         }
 
+        // Recent activity
+        let outcomes_data: Value = match self.client()
+            .get(format!("{}/api/outcomes?limit=5", self.base()))
+            .send()
+            .await
+        {
+            Ok(resp) => resp.json().await.unwrap_or(json!([])),
+            Err(_) => json!([]),
+        };
+
+        if let Some(outcomes) = outcomes_data.as_array() {
+            if !outcomes.is_empty() {
+                lines.push("\nRecent activity:".to_string());
+                for o in outcomes {
+                    let action = o["action"].as_str().unwrap_or("?");
+                    let target = o["targetMachine"].as_str().unwrap_or("local");
+                    let status = o["status"].as_str().unwrap_or("?");
+                    let duration = o["durationSecs"].as_f64()
+                        .map(|d| format!(" ({d:.0}s)"))
+                        .unwrap_or_default();
+                    lines.push(format!("  - {action} on {target}: {status}{duration}"));
+                }
+            }
+        }
+
         Ok(lines.join("\n"))
+    }
+
+    pub async fn recent_outcomes(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        let resp: Value = self.client()
+            .get(format!("{}/api/outcomes?limit=20", self.base()))
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(json!({ "outcomes": resp }))
     }
 
     pub fn resource_list() -> Vec<Value> {
@@ -257,6 +292,12 @@ impl ResourceBuilder {
                 "name": "Context Briefing",
                 "description": "Plain-language summary of the entire mesh: machines, sessions, and how to interact",
                 "mimeType": "text/plain"
+            }),
+            json!({
+                "uri": "ghost://outcomes/recent",
+                "name": "Recent Outcomes",
+                "description": "Recent action outcomes across the mesh: what was done, where, and whether it succeeded",
+                "mimeType": "application/json"
             }),
         ]
     }

@@ -144,6 +144,14 @@ async fn read_resource(
                 "text": text
             }))
         }
+        "ghost://outcomes/recent" => {
+            let data = builder.recent_outcomes().await?;
+            Ok(json!({
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": serde_json::to_string_pretty(&data)?
+            }))
+        }
         _ => Err(format!("unknown resource: {uri}").into()),
     }
 }

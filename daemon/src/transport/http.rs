@@ -1051,6 +1051,104 @@ pub async fn list_outcomes(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/projects (localhost-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateProjectBody {
+    pub name: String,
+    pub workdir: String,
+    pub config: serde_json::Value,
+}
+
+pub async fn create_project(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Json(body): Json<CreateProjectBody>,
+) -> Result<(StatusCode, Json<crate::store::projects::ProjectRecord>), (StatusCode, Json<serde_json::Value>)> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let config_json = serde_json::to_string(&body.config).unwrap_or_default();
+    state.store.create_project(&id, &body.name, &body.workdir, &config_json)
+        .map(|p| (StatusCode::CREATED, Json(p)))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/projects (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn list_projects(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::store::projects::ProjectRecord>>, (StatusCode, Json<serde_json::Value>)> {
+    state.store.list_projects().map(Json).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/projects/{id} (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn get_project(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::store::projects::ProjectRecord>, (StatusCode, Json<serde_json::Value>)> {
+    state.store.get_project(&id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?.ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "project not found" })))).map(Json)
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/projects/{id} (localhost-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct UpdateProjectBody {
+    pub config: serde_json::Value,
+}
+
+pub async fn update_project(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateProjectBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let config_json = serde_json::to_string(&body.config).unwrap_or_default();
+    state.store.update_project(&id, &config_json).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/projects/{id} (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn remove_project(
+    _guard: RequireLocalhostOnly,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    state.store.remove_project(&id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") })))
+    })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/agents (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn list_agents(
+    _guard: RequireLocalhostOnly,
+) -> Json<Vec<crate::hardware::agents::AgentInfo>> {
+    Json(crate::hardware::agents::detect_agents())
+}
+
+// ---------------------------------------------------------------------------
 // PUT /api/approvals/{id}/deny  (localhost-only)
 // ---------------------------------------------------------------------------
 

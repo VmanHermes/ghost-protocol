@@ -194,6 +194,9 @@ textarea { resize: vertical; }
   margin-bottom: 12px;
 }
 .sidebar-hosts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -1527,6 +1530,106 @@ textarea { resize: vertical; }
 .status-expired {
   background: rgba(100, 116, 139, 0.1);
   color: var(--text-muted);
+}
+
+/* Discovery cards */
+.sidebar-discovery-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin: 4px 8px;
+  border-radius: 6px;
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+}
+
+.sidebar-discovery-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sidebar-discovery-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary, #e2e8f0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-discovery-ip {
+  font-size: 0.75rem;
+}
+
+.sidebar-discovery-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.btn-discovery-add {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-discovery-add:hover {
+  background: rgba(16, 185, 129, 0.25);
+}
+
+.btn-discovery-dismiss {
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.btn-discovery-dismiss:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.right-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
+}
+
+.right-panel-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary, #e2e8f0);
+}
+
+.sidebar-add-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-add-btn:hover {
+  color: var(--text-primary, #e2e8f0);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* ─── Right panel responsive ─── */

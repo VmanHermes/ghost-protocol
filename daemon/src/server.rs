@@ -28,16 +28,37 @@ pub async fn run(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
     // 4. Recover sessions
     manager.recover().await;
 
-    // 5. Start background host health poller
+    // 5. Start background host health poller + discovery
     {
         let store = store.clone();
         tokio::spawn(async move {
             let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(3))
                 .build()
                 .unwrap_or_default();
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                // Phase 1: Discover new peers via Tailscale
+                let peers = crate::host::detect::list_tailscale_peers();
+                for peer in &peers {
+                    if !peer.online {
+                        continue;
+                    }
+                    if store.is_known_or_dismissed(&peer.ip).unwrap_or(true) {
+                        continue;
+                    }
+                    let health_url = format!("http://{}:8787/health", peer.ip);
+                    match client.get(&health_url).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            store.upsert_discovered_peer(&peer.ip, &peer.name).ok();
+                            tracing::info!(peer = %peer.name, ip = %peer.ip, "discovered new Ghost Protocol peer");
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Phase 2: Poll known hosts (existing logic)
                 if let Ok(hosts) = store.list_known_hosts() {
                     for host in hosts {
                         let url = format!("{}/api/system/hardware", host.url);

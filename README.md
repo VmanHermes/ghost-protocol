@@ -5,121 +5,221 @@
 ![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61dafb)
 ![Backend](https://img.shields.io/badge/backend-Rust-dea584)
 
-Ghost Protocol is a multi-machine terminal and AI agent interface built on Tailscale. It lets you host a connection on one Linux machine and join from another, sharing terminal sessions over a private mesh network. The long-term goal is a unified control plane for the Hermes AI agent runtime across all your devices.
+Ghost Protocol is a multi-machine AI agent control plane built on Tailscale. Manage terminals, chat with agents, and orchestrate work across your mesh — with per-machine permissions, auto-discovery, and outcome tracking.
 
 ## What it does
 
-- **Host a connection** — start the daemon on any machine, bound to its Tailscale IP. Other devices on your mesh can connect.
-- **Join a connection** — add a remote host by Tailscale IP. See its terminal sessions and create new ones.
-- **Shared terminals** — terminal sessions persist via the daemon. Multiple clients can view and interact with the same session.
-- **Setup checklist** — guided onboarding that detects tmux, Tailscale, mesh connectivity, and the daemon, with one-click install commands.
-- **Log viewer** — unified client and server logs for debugging connection lifecycle.
+- **Auto-discovery** — finds Ghost Protocol peers on your Tailscale mesh automatically
+- **Connections** — sidebar shows all machines sorted by state (connected/offline)
+- **Terminals** — create and share terminal sessions across machines, persisted via tmux
+- **Agent chat** — discover available AI agents (Claude Code, Hermes, Ollama, Aider, OpenClaw) and chat with them
+- **Permissions** — 4 tiers per machine: full-access, approval-required, read-only, no-access
+- **Approval flow** — write operations from guarded peers queue for your approval with 120s timeout
+- **Outcome log** — agents report work results, daemon auto-captures terminal lifecycle
+- **MCP tools** — `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines`, `ghost_list_agents`
+- **Ghost CLI** — `ghost init`, `ghost status`, `ghost agents`, `ghost chat`, `ghost projects`
+- **Settings** — permission management per host with tier dropdowns
 
 ## Architecture
 
 ```
-┌─────────────────────┐        Tailscale mesh        ┌─────────────────────┐
-│  Machine A (host)   │◄────────────────────────────►│  Machine B (join)   │
-│                     │     HTTP + WebSocket          │                     │
-│  ghost-protocol     │                               │  ghost-protocol     │
-│  (Tauri 2 app)      │                               │  (Tauri 2 app)      │
-│       │              │                               │                     │
-│       ▼              │                               │                     │
-│  ghost_protocol_     │                               │                     │
-│  daemon (Rust)       │                               │                     │
-│       │              │                               │                     │
-│       ▼              │                               │                     │
-│  terminal sessions   │                               │                     │
-│  (PTY / tmux)        │                               │                     │
-└─────────────────────┘                               └─────────────────────┘
+┌─────────────────���────┐       Tailscale mesh       ┌──────────────────────┐
+│  Machine A           │◄──────────────────────────►│  Machine B           │
+│                      │    HTTP + WebSocket         │                      │
+│  ghost-protocol      │                             │  ghost-protocol      │
+│  (Tauri 2 desktop)   │                             │  (Tauri 2 desktop)   │
+│       │              │                             │       │              │
+│       ▼              │                             │       ▼              │
+│  ghost-protocol-     │                             │  ghost-protocol-     │
+│  daemon (Rust)       │                             │  daemon (Rust)       │
+│  ├─ terminal sessions│                             │  ├─ terminal sessions│
+│  ├─ chat sessions    │                             │  ├─ chat sessions    │
+│  ├─ agent detection  │                             │  ├─ agent detection  │
+│  ├─ MCP server       │                             │  ├─ MCP server       │
+│  └─ SQLite store     │                             │  └─ SQLite store     │
+└──────────────────────┘                             └─────────────────���────┘
 ```
 
-- `daemon/` — Rust daemon with HTTP + WebSocket APIs for terminal sessions
-- `desktop/` — Tauri 2 desktop client (React + TypeScript + xterm.js)
-- `docs/` — architecture, design specs, and project plan
+- `daemon/` — Rust daemon: HTTP + WebSocket + MCP server
+- `desktop/` — Tauri 2 desktop app: React + TypeScript + xterm.js
+- `cli/` — Ghost CLI: project init, status, agents, chat
+- `docs/` — architecture, design specs, plans
 
 ## Requirements
 
 - Linux (Arch, Ubuntu, Fedora, etc.)
-- tmux (required on hosts for session persistence)
+- tmux 3.0+ (for session persistence)
 - Tailscale installed and connected to a mesh
 - For development: Node.js + npm, Rust + Cargo
 
 ## Install (packaged release)
 
-Download the latest release from GitHub:
-
 ```bash
-# Download and extract
-tar xzf ghost-protocol-0.1.1-linux-x86_64.tar.gz
-cd ghost-protocol-0.1.1
+# Download latest release
+curl -LO https://github.com/VmanHermes/ghost-protocol/releases/latest/download/ghost-protocol-0.2.1-linux-x86_64.tar.gz
+tar xzf ghost-protocol-0.2.1-linux-x86_64.tar.gz
+cd ghost-protocol-0.2.1
 
-# Install system-wide
+# Install system-wide (installs ghost-protocol, ghost-protocol-daemon, ghost CLI)
 sudo ./install.sh
 ```
-
-The app auto-installs the daemon when you click "Host a Connection".
 
 ## Install (from source)
 
 ```bash
 git clone git@github.com:VmanHermes/ghost-protocol.git
 cd ghost-protocol
-npm --prefix desktop install
-cd daemon && cargo build --release
+
+# Build daemon
+cd daemon && cargo build --release && cd ..
+
+# Build CLI
+cd cli && cargo build --release && cd ..
+
+# Build desktop app
+cd desktop && npm install && npm run tauri build
 ```
 
 ## Run
 
-### Packaged app
-
-Launch from your application menu, or:
-```bash
-ghost-protocol
-```
-
 ### Development
 
 ```bash
+# Terminal 1: Start the daemon
+cd daemon
+cargo run -- serve
+
+# Terminal 2: Start the desktop app
 cd desktop
 npm run tauri dev
+
+# Terminal 3 (optional): Use the ghost CLI
+cd cli
+cargo run -- status
+cargo run -- agents
 ```
 
-The backend daemon can be started separately for development:
+### Production
+
 ```bash
-cd daemon
-cargo build --release
-./target/release/ghost-protocol-daemon --bind-host 127.0.0.1
+# Start daemon (binds to Tailscale IP + localhost)
+ghost-protocol-daemon --bind-host 100.64.x.x,127.0.0.1
+
+# Launch desktop app
+ghost-protocol
+
+# Use CLI
+ghost status
+ghost agents
+ghost init        # in a project directory
+ghost chat claude-code
 ```
 
-## Usage
+## Ghost CLI
 
-1. **First launch** — the setup checklist guides you through installing tmux and Tailscale, and connecting to a Tailscale mesh.
-2. **Host a connection** — click the play button in the sidebar. This installs/starts the daemon bound to your Tailscale IP.
-3. **Join from another machine** — on a second machine, click "Add Host" and enter the first machine's Tailscale IP (e.g. `http://100.x.x.x:8787`).
-4. **Create terminals** — use the `+` button to create local terminals, or the dropdown to create sessions on a connected remote host.
-5. **View logs** — click "Logs" in the sidebar to see client and server logs for debugging.
+```bash
+ghost init          # Initialize a project — creates .ghost/config.json, registers with daemon
+ghost status        # Mesh overview: machines, online count
+ghost agents        # List detected agents on this machine
+ghost projects      # List registered projects
+ghost chat <agent>  # Start a chat with an agent (e.g., ghost chat claude-code)
+ghost help          # Show available commands
+```
+
+## Daemon CLI
+
+```bash
+ghost-protocol-daemon serve                # Start HTTP server (default)
+ghost-protocol-daemon mcp                  # Start MCP resource server over stdio
+ghost-protocol-daemon status               # One-line machine summary
+ghost-protocol-daemon status --json        # Machine status as JSON
+ghost-protocol-daemon sessions             # List terminal sessions
+ghost-protocol-daemon hosts                # List known mesh peers
+ghost-protocol-daemon info                 # Full machine profile as JSON
+```
+
+## Database
+
+The daemon uses SQLite, stored at `./data/ghost_protocol.db` by default (configurable via `--db-path` or `GHOST_PROTOCOL_DB` env var).
+
+**Migrations run automatically** on daemon startup — no manual migration step needed.
+
+**Reset the database:**
+```bash
+# Stop the daemon first, then:
+rm -f data/ghost_protocol.db
+
+# Restart — daemon recreates the database with all tables
+ghost-protocol-daemon serve
+```
+
+**Custom DB location:**
+```bash
+ghost-protocol-daemon --db-path /path/to/custom.db serve
+```
+
+## MCP Integration
+
+The daemon exposes an MCP server for AI agent integration:
+
+```json
+// .mcp.json (for Claude Code)
+{
+  "mcpServers": {
+    "ghost-daemon": {
+      "type": "stdio",
+      "command": "ghost-protocol-daemon",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Resources:** machine/info, machine/status, network/hosts, terminal/sessions, agent/hints, context/briefing, outcomes/recent, agents/available
+
+**Tools:** ghost_report_outcome, ghost_check_mesh, ghost_list_machines, ghost_list_agents
+
+## Configuration
+
+| Environment Variable | CLI Flag | Default | Description |
+|---|---|---|---|
+| `GHOST_PROTOCOL_BIND_HOST` | `--bind-host` | `127.0.0.1` | Bind address (comma-separated for multiple) |
+| `GHOST_PROTOCOL_BIND_PORT` | `--bind-port` | `8787` | HTTP port |
+| `GHOST_PROTOCOL_ALLOWED_CIDRS` | `--allowed-cidrs` | Tailscale ranges + localhost | IP allowlist |
+| `GHOST_PROTOCOL_DB` | `--db-path` | `./data/ghost_protocol.db` | SQLite database path |
+| `GHOST_PROTOCOL_LOG_DIR` | `--log-dir` | `./data/logs` | Log directory |
 
 ## Useful commands
 
 ```bash
-# Check daemon status
+# Health check
 curl http://127.0.0.1:8787/health
 
-# List Tailscale IP
-tailscale ip -4
+# List agents
+curl http://127.0.0.1:8787/api/agents
 
-# Build a release package
-bash scripts/package-linux.sh
+# List projects
+curl http://127.0.0.1:8787/api/projects
 
-# Daemon type-check
+# List hosts with permissions
+curl http://127.0.0.1:8787/api/permissions
+
+# Report an outcome
+curl -X POST http://127.0.0.1:8787/api/outcomes \
+  -H 'Content-Type: application/json' \
+  -d '{"category":"build","action":"cargo build","status":"success","durationSecs":12.5}'
+
+# Type-check daemon
 cd daemon && cargo check
 
-# Frontend type-check
+# Type-check frontend
 cd desktop && npx tsc --noEmit
 
-# Cargo check
-cd desktop/src-tauri && cargo check
+# Run daemon tests
+cd daemon && cargo test
+
+# Build release package
+bash scripts/package-linux.sh
 ```
 
 ## Docs

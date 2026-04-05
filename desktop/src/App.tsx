@@ -12,6 +12,7 @@ import type {
 import { Sidebar } from "./components/Sidebar";
 import { TerminalWorkspace } from "./components/TerminalWorkspace";
 import { LogViewer } from "./components/LogViewer";
+import { RightPanel } from "./components/RightPanel";
 import "./App.css";
 
 // NOTE: "chat" view is hidden until the Rust daemon adds conversation/agent support.
@@ -516,8 +517,7 @@ function App() {
         </div>
       </section>
 
-      {/* InspectorPanel hidden — agent/run/approval observability not available in Rust daemon yet */}
-      {/* Will be restored when the Rust daemon adds agent support */}
+      <RightPanel daemonUrl={LOCAL_DAEMON} />
     </main>
   );
 }

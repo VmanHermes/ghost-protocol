@@ -16,10 +16,7 @@ import { RightPanel } from "./components/RightPanel";
 import { PermissionsTab } from "./components/PermissionsTab";
 import "./App.css";
 
-// NOTE: "chat" view is hidden until the Rust daemon adds conversation/agent support.
-// ChatView, InspectorPanel, and related imports are commented out for now.
-// import { ChatView } from "./components/ChatView";
-// import { InspectorPanel } from "./components/InspectorPanel";
+import { ChatView } from "./components/ChatView";
 
 // "chat" is kept in the union so Sidebar nav items still type-check,
 // but no panel renders for it until the Rust daemon adds chat support.
@@ -374,8 +371,9 @@ function App() {
       />
 
       <section className="main-panel">
-        {/* Chat view hidden — Rust daemon does not serve conversation/agent endpoints yet */}
-        {/* Will be restored when the Rust daemon adds chat support */}
+        <div style={{ display: mainView === "chat" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <ChatView daemonUrl={LOCAL_DAEMON} hosts={hosts} />
+        </div>
 
         <div style={{ display: mainView === "terminal" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
           <TerminalWorkspace

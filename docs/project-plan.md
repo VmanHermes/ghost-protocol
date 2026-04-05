@@ -107,16 +107,29 @@ Terminal sharing, local PTY, multi-host connections over Tailscale.
 
 **Goal:** Three high-value features that fundamentally change how you interact with the mesh — chat with any agent on any machine, develop remotely via code-server, and observe all agents in real time.
 
-### 3a: Agent Chat (high priority)
+### 3a: Ghost CLI, Project System & Agent Chat (high priority)
 
-Multi-agent chat interface — not hardwired to Hermes, but discovers available agents on each connected machine.
+Full spec: `docs/superpowers/specs/2026-04-05-agent-discovery-design.md`
 
-- On startup (and periodically), each daemon probes its machine for available agent runtimes (Claude Code, Hermes, Ollama, etc.)
-- Agents are advertised as capabilities in the host registry (like GPU/RAM today)
-- Chat UI lets you pick a machine + agent and start a conversation
-- Conversation/message persistence in daemon SQLite
-- WebSocket streaming for real-time agent responses
-- Chat sessions tied to machines — "talk to Claude on shared-host" or "talk to Hermes on laptop"
+- `ghost` CLI binary: `init`, `status`, `agents`, `chat`, `projects`, `help`
+- `.ghost/config.json` project manifest — agents, machines, commands, environment
+- Daemon project registry + agent detection (Claude Code, Hermes, Ollama, Aider, OpenClaw)
+- Custom agent registration via config
+- Chat sessions wrapping terminal sessions with agent-specific parsing adapters
+- Unified session types: terminal, chat, code-server
+- Terminal help text showing available ghost commands on open
+- Desktop ChatView revived with machine + agent picker
+
+### 3a-next: Embedded Intelligence Layer (high priority)
+
+**Design philosophy:** Ghost Protocol doesn't just connect you to agents — it orchestrates them using an agent of your choice as the intelligence layer.
+
+- User selects a "primary agent" per project (e.g., Claude via API key, local Ollama model)
+- Ghost Protocol uses this agent internally for: initial prompt generation, memory/RAG over outcomes + chat history, work routing decisions, behavioral oversight
+- API keys / model config stored in project manifest or user settings
+- The context briefing, outcome log, and MCP tools become the agent's working context
+- Enables: intelligent routing ("this build failed on laptop, try shared-host"), project-aware prompts, cross-session memory, skill/tool injection into agent sessions
+- Absorbs Distribution Advisor and Behavioral Oversight from Experimental into this unified concept
 
 ### 3b: Remote code-server (high priority)
 
@@ -171,24 +184,15 @@ Real-time view of all agents running across the mesh — what they're doing, res
 
 Ideas with potential but not yet prioritized. May be promoted to a phase when real usage patterns clarify their value.
 
-### Distribution Advisor
-
-- LLM with RAG over the outcome log
-- Suggests which machine to route work to based on historical performance, current load, and capabilities
-- Exposed as MCP tool: `ghost_route_advice`
-- **Depends on:** sufficient outcome log data to be useful
-
-### Behavioral Oversight ("Police" LLM)
-
-- Monitors inter-agent communication patterns
-- Flags anomalies (repeated write attempts from low-trust peers, unusual request patterns)
-- Could auto-downgrade tiers or enforce rate limits
-- **Depends on:** multi-agent chat being active to have patterns to monitor
-
 ### Subagent tree reconstruction
 
 - Reconstruct agent delegation trees from run events
 - Visualize which agent spawned which sub-agent and their outcomes
+
+### Plugin system for agent adapters
+
+- Third-party agent adapter plugins (beyond built-in Claude/Hermes/Ollama/Aider/OpenClaw)
+- Standard interface for parsing agent output into chat messages
 
 ---
 

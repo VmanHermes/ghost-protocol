@@ -83,6 +83,34 @@ impl PtyManager {
 
         let child = Arc::new(Mutex::new(child));
 
+        // Emit welcome/help text as the first chunk
+        let hostname = std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let version = env!("CARGO_PKG_VERSION");
+        let welcome = format!(
+            "\x1b[2m\
+Ghost Protocol v{version} — {hostname}\r\n\
+\r\n\
+Commands:\r\n\
+  ghost init          Set up a project in this directory\r\n\
+  ghost status        Mesh overview (machines, sessions)\r\n\
+  ghost agents        Available agents across the mesh\r\n\
+  ghost chat <agent>  Start a chat with an agent\r\n\
+  ghost projects      Registered projects\r\n\
+  ghost help          Full command reference\r\n\
+\x1b[0m\r\n"
+        );
+        let _ = app.emit(
+            "pty:chunk",
+            PtyChunk {
+                session_id: session_id.clone(),
+                data: welcome,
+            },
+        );
+
         // Reader thread
         let reader_session_id = session_id.clone();
         let reader_app = app.clone();

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "../lib/platform";
 
 type CheckStatus = "pending" | "ok" | "missing" | "too_old";
 
@@ -69,6 +69,14 @@ export function SetupChecklist({ visible, onDismiss, onHostDetected }: Props) {
   const hostDetectedRef = useRef(false);
 
   const runDetection = useCallback(async () => {
+    if (!isTauri()) {
+      setChecks(INITIAL_CHECKS.map((c) => ({ ...c, status: "ok" as CheckStatus, version: "N/A (PWA)" })));
+      setAllDone(true);
+      return;
+    }
+
+    const { invoke } = await import("@tauri-apps/api/core");
+
     try {
       const pm = await invoke<string>("detect_package_manager").catch(() => "unknown");
       setPackageManager(typeof pm === "string" ? pm : "unknown");

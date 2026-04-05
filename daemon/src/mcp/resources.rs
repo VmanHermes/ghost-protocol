@@ -9,11 +9,11 @@ impl ResourceBuilder {
         Self { port }
     }
 
-    fn base(&self) -> String {
+    pub(crate) fn base(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    fn client(&self) -> reqwest::Client {
+    pub(crate) fn client(&self) -> reqwest::Client {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
@@ -242,7 +242,65 @@ impl ResourceBuilder {
             }
         }
 
+        // Tool instructions
+        lines.push("\nAvailable Ghost Protocol tools:".to_string());
+        lines.push("  - ghost_report_outcome: Report what you did and the result after completing work".to_string());
+        lines.push("  - ghost_check_mesh: Check current mesh state (machines, sessions, activity)".to_string());
+        lines.push("  - ghost_list_machines: Get machine capabilities and permissions for routing decisions".to_string());
+        lines.push("".to_string());
+        lines.push("After completing significant work (builds, deployments, inference, file operations),".to_string());
+        lines.push("use ghost_report_outcome to log the result. This helps the mesh learn which machines".to_string());
+        lines.push("are best for which tasks.".to_string());
+
         Ok(lines.join("\n"))
+    }
+
+    pub async fn list_machines(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        let local_info = self.machine_info().await?;
+        let hosts_data = self.network_hosts().await?;
+        let perms_data: Value = match self.client()
+            .get(format!("{}/api/permissions", self.base()))
+            .send()
+            .await
+        {
+            Ok(resp) => resp.json().await.unwrap_or(json!([])),
+            Err(_) => json!([]),
+        };
+
+        let mut peers = vec![];
+        if let Some(hosts) = hosts_data["hosts"].as_array() {
+            for h in hosts {
+                let ip = h["tailscaleIp"].as_str().unwrap_or("?");
+                let tier = perms_data.as_array()
+                    .and_then(|arr| arr.iter().find(|p| p["tailscaleIp"].as_str() == Some(ip)))
+                    .and_then(|p| p["tier"].as_str())
+                    .unwrap_or("no-access");
+
+                peers.push(json!({
+                    "name": h["name"],
+                    "ip": ip,
+                    "status": h["status"],
+                    "gpu": h.get("capabilities").and_then(|c| c.get("gpu")).unwrap_or(&json!(null)),
+                    "ramGb": h.get("capabilities").and_then(|c| c.get("ramGb")).unwrap_or(&json!(null)),
+                    "capabilities": {
+                        "hermes": h.get("capabilities").and_then(|c| c["hermes"].as_bool()).unwrap_or(false),
+                        "ollama": h.get("capabilities").and_then(|c| c["ollama"].as_bool()).unwrap_or(false),
+                    },
+                    "permissionTier": tier,
+                }));
+            }
+        }
+
+        Ok(json!({
+            "local": {
+                "hostname": local_info["hostname"],
+                "ip": local_info["tailscaleIp"],
+                "cpu": local_info["cpu"]["model"],
+                "ramGb": local_info["ramGb"],
+                "gpu": local_info.get("gpu").and_then(|g| g.get("model")).unwrap_or(&json!(null)),
+            },
+            "peers": peers,
+        }))
     }
 
     pub async fn recent_outcomes(&self) -> Result<Value, Box<dyn std::error::Error>> {

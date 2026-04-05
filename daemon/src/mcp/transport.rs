@@ -36,7 +36,8 @@ pub async fn run_stdio(port: u16) -> Result<(), Box<dyn std::error::Error>> {
                     "result": {
                         "protocolVersion": "2025-03-26",
                         "capabilities": {
-                            "resources": {}
+                            "resources": {},
+                            "tools": {}
                         },
                         "serverInfo": {
                             "name": "ghost-protocol",
@@ -70,6 +71,36 @@ pub async fn run_stdio(port: u16) -> Result<(), Box<dyn std::error::Error>> {
                         "jsonrpc": "2.0",
                         "id": id,
                         "error": { "code": -32602, "message": format!("resource error: {e}") }
+                    }),
+                }
+            }
+            "tools/list" => {
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "tools": tool_definitions()
+                    }
+                })
+            }
+            "tools/call" => {
+                let name = request["params"]["name"].as_str().unwrap_or("");
+                let arguments = &request["params"]["arguments"];
+                match call_tool(&builder, name, arguments).await {
+                    Ok(text) => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": text
+                            }]
+                        }
+                    }),
+                    Err(e) => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": format!("tool error: {e}") }
                     }),
                 }
             }
@@ -153,6 +184,82 @@ async fn read_resource(
             }))
         }
         _ => Err(format!("unknown resource: {uri}").into()),
+    }
+}
+
+fn tool_definitions() -> Value {
+    json!([
+        {
+            "name": "ghost_report_outcome",
+            "description": "Report the outcome of work you performed. Call this after completing builds, deployments, inference, or other significant tasks. Helps the mesh learn which machines are best for which work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "category": { "type": "string", "description": "Type of work: build, inference, deploy, test, custom" },
+                    "action": { "type": "string", "description": "What you did: 'cargo build --release', 'ollama run llama3', etc." },
+                    "status": { "type": "string", "enum": ["success", "failure", "timeout", "cancelled"], "description": "Outcome" },
+                    "description": { "type": "string", "description": "Optional context about what you were trying to accomplish" },
+                    "targetMachine": { "type": "string", "description": "Which machine the work ran on (hostname or IP)" },
+                    "exitCode": { "type": "integer", "description": "Process exit code if applicable" },
+                    "durationSecs": { "type": "number", "description": "How long the work took in seconds" },
+                    "metadata": { "type": "object", "description": "Any additional structured data" }
+                },
+                "required": ["category", "action", "status"]
+            }
+        },
+        {
+            "name": "ghost_check_mesh",
+            "description": "Get current mesh state: machines, active sessions, recent activity, and permission levels. Use this to understand what's available before routing work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        },
+        {
+            "name": "ghost_list_machines",
+            "description": "Get structured machine data for routing decisions: name, IP, online status, GPU, RAM, capabilities, and your permission tier on each machine.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    ])
+}
+
+async fn call_tool(
+    builder: &ResourceBuilder,
+    name: &str,
+    arguments: &Value,
+) -> Result<String, Box<dyn std::error::Error>> {
+    match name {
+        "ghost_report_outcome" => {
+            let client = builder.client();
+            let resp = client
+                .post(format!("{}/api/outcomes", builder.base()))
+                .json(arguments)
+                .send()
+                .await?;
+            if resp.status().is_success() {
+                let body: Value = resp.json().await?;
+                let id = body["id"].as_str().unwrap_or("?");
+                let created = body["createdAt"].as_str().unwrap_or("?");
+                Ok(format!("Outcome recorded (id: {id}, created: {created})"))
+            } else {
+                let text = resp.text().await?;
+                Err(format!("failed to report outcome: {text}").into())
+            }
+        }
+        "ghost_check_mesh" => {
+            let briefing = builder.context_briefing().await?;
+            Ok(briefing)
+        }
+        "ghost_list_machines" => {
+            let data = builder.list_machines().await?;
+            Ok(serde_json::to_string_pretty(&data)?)
+        }
+        _ => Err(format!("unknown tool: {name}").into()),
     }
 }
 

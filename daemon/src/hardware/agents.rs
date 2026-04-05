@@ -14,7 +14,7 @@ pub struct AgentInfo {
 pub fn detect_agents() -> Vec<AgentInfo> {
     let mut agents = Vec::new();
 
-    // Claude Code
+    // Claude Code — runs as interactive TUI in tmux
     if let Some(version) = detect_cli_version("claude", &["--version"]) {
         agents.push(AgentInfo {
             id: "claude-code".into(),

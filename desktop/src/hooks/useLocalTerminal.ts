@@ -88,21 +88,7 @@ export function useLocalTerminal({
       const terminal = terminalRef.current;
       if (terminal) terminal.reset();
     }
-
-    // Prepend welcome text to chunk buffer — gets flushed when terminal is ready
-    chunkBufferRef.current = [
-      "\x1b[2m" +
-      "Ghost Protocol — Developer Console\r\n" +
-      "\r\n" +
-      "Commands:\r\n" +
-      "  ghost init          Set up a project in this directory\r\n" +
-      "  ghost status        Mesh overview (machines, sessions)\r\n" +
-      "  ghost agents        Available agents across the mesh\r\n" +
-      "  ghost chat <agent>  Start a chat with an agent\r\n" +
-      "  ghost projects      Registered projects\r\n" +
-      "  ghost help          Full command reference\r\n" +
-      "\x1b[0m\r\n",
-    ];
+    chunkBufferRef.current = [];
 
     const sessionCreatedAt = new Date().toISOString();
     setSessionMeta({

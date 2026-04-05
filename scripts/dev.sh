@@ -22,6 +22,18 @@ if [[ "${1:-}" == "--reset" ]]; then
     shift
 fi
 
+# 0. Build and install ghost CLI to ~/.local/bin
+echo "==> Building ghost CLI..."
+cd "$ROOT_DIR/cli"
+cargo build 2>&1 | tail -5
+mkdir -p "$HOME/.local/bin"
+ln -sf "$ROOT_DIR/cli/target/debug/ghost" "$HOME/.local/bin/ghost"
+ln -sf "$ROOT_DIR/daemon/target/debug/ghost-protocol-daemon" "$HOME/.local/bin/ghost-protocol-daemon"
+echo "==> ghost CLI installed to ~/.local/bin/ghost"
+
+# Ensure ~/.local/bin is in PATH for this session
+export PATH="$HOME/.local/bin:$PATH"
+
 # 1. Start daemon
 echo "==> Starting daemon..."
 cd "$ROOT_DIR/daemon"

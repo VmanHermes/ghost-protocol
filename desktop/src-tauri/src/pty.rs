@@ -2,9 +2,43 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
+
+/// Find directories containing ghost CLI and daemon binaries.
+/// Checks: installed location, dev build paths relative to the app executable.
+fn find_ghost_bin_dirs() -> Vec<String> {
+    let mut dirs = Vec::new();
+
+    // Installed: /usr/local/bin (already in PATH usually, but be safe)
+    if PathBuf::from("/usr/local/bin/ghost").exists() {
+        dirs.push("/usr/local/bin".to_string());
+    }
+
+    // Dev: cli/target/debug/ and daemon/target/debug/ relative to project root
+    if let Ok(exe) = std::env::current_exe() {
+        // Tauri dev: exe is in desktop/src-tauri/target/debug/
+        // Project root is 4 levels up
+        if let Some(project_root) = exe.parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
+            let cli_dir = project_root.join("cli/target/debug");
+            if cli_dir.join("ghost").exists() {
+                dirs.push(cli_dir.to_string_lossy().to_string());
+            }
+            let daemon_dir = project_root.join("daemon/target/debug");
+            if daemon_dir.join("ghost-protocol-daemon").exists() {
+                dirs.push(daemon_dir.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    dirs
+}
 
 #[derive(Clone, Serialize)]
 pub struct PtyChunk {
@@ -62,6 +96,14 @@ impl PtyManager {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("GHOST_PROTOCOL_LOCAL", "1");
+
+        // Add ghost CLI and daemon to PATH so `ghost` commands work in every terminal
+        let existing_path = std::env::var("PATH").unwrap_or_default();
+        let ghost_paths = find_ghost_bin_dirs();
+        if !ghost_paths.is_empty() {
+            let prepend = ghost_paths.join(":");
+            cmd.env("PATH", format!("{prepend}:{existing_path}"));
+        }
 
         if let Some(ref dir) = workdir {
             cmd.cwd(dir);

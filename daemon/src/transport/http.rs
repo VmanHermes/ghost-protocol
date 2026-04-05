@@ -4,7 +4,9 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::host::logs::LogBuffer;
-use crate::middleware::permissions::{PeerTier, RequireFullAccess, RequireLocalhostOnly, RequireReadOnly};
+use crate::middleware::permissions::{
+    ClientIp, OptionalNeedsApproval, RequireFullAccess, RequireLocalhostOnly, RequireReadOnly,
+};
 use crate::store::permissions::{PeerPermission, PendingApproval};
 use crate::store::Store;
 use crate::terminal::manager::TerminalManager;
@@ -30,7 +32,10 @@ pub async fn health() -> Json<serde_json::Value> {
 // GET /api/system/status
 // ---------------------------------------------------------------------------
 
-pub async fn system_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+pub async fn system_status(
+    _tier: RequireReadOnly,
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
     let sessions = state.store.list_terminal_sessions().unwrap_or_default();
     let active_count = sessions.iter().filter(|s| s.status == "running").count();
 
@@ -59,6 +64,7 @@ fn default_log_limit() -> usize {
 }
 
 pub async fn system_logs(
+    _tier: RequireReadOnly,
     State(state): State<AppState>,
     Query(params): Query<LogsQuery>,
 ) -> Json<Vec<crate::host::logs::LogEntry>> {
@@ -73,6 +79,7 @@ pub async fn system_logs(
 // ---------------------------------------------------------------------------
 
 pub async fn list_sessions(
+    _tier: RequireReadOnly,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::store::sessions::TerminalSessionRecord>>, (StatusCode, Json<serde_json::Value>)>
 {
@@ -106,15 +113,58 @@ fn default_workdir() -> String {
 }
 
 pub async fn create_session(
+    _tier: RequireFullAccess,
+    needs_approval: OptionalNeedsApproval,
+    client_ip: ClientIp,
     State(state): State<AppState>,
     Json(body): Json<CreateSessionBody>,
-) -> Result<(StatusCode, Json<crate::store::sessions::TerminalSessionRecord>), (StatusCode, Json<serde_json::Value>)>
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>
 {
+    if needs_approval.0 {
+        let host_id = state
+            .store
+            .resolve_host_id_by_ip(&client_ip.0)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let id = uuid::Uuid::new_v4().to_string();
+        let expires_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        let body_json = serde_json::to_string(&serde_json::json!({
+            "mode": body.mode,
+            "name": body.name,
+            "workdir": body.workdir,
+        }))
+        .ok();
+        if let Ok(approval) = state.store.create_approval(
+            &id,
+            &host_id,
+            "POST",
+            "/api/terminal/sessions",
+            body_json.as_deref(),
+            &expires_at,
+        ) {
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "approvalRequired": true,
+                    "approvalId": approval.id,
+                    "expiresAt": approval.expires_at,
+                })),
+            ));
+        }
+    }
+
     state
         .manager
         .create_session(&body.mode, body.name.as_deref(), &body.workdir)
         .await
-        .map(|rec| (StatusCode::CREATED, Json(rec)))
+        .map(|rec| {
+            (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(rec).unwrap_or_default()),
+            )
+        })
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -128,6 +178,7 @@ pub async fn create_session(
 // ---------------------------------------------------------------------------
 
 pub async fn get_session(
+    _tier: RequireReadOnly,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -192,10 +243,45 @@ fn default_append_newline_rest() -> bool {
 }
 
 pub async fn send_input(
+    _tier: RequireFullAccess,
+    needs_approval: OptionalNeedsApproval,
+    client_ip: ClientIp,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<InputBody>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    if needs_approval.0 {
+        let host_id = state
+            .store
+            .resolve_host_id_by_ip(&client_ip.0)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        let expires_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        let body_json = serde_json::to_string(&serde_json::json!({
+            "input": body.input,
+            "appendNewline": body.append_newline,
+        }))
+        .ok();
+        let path = format!("/api/terminal/sessions/{id}/input");
+        if state
+            .store
+            .create_approval(
+                &approval_id,
+                &host_id,
+                "POST",
+                &path,
+                body_json.as_deref(),
+                &expires_at,
+            )
+            .is_ok()
+        {
+            return Ok(StatusCode::ACCEPTED);
+        }
+    }
+
     state
         .manager
         .send_input(&id, body.input.as_bytes(), body.append_newline)
@@ -220,16 +306,51 @@ pub struct ResizeBody {
 }
 
 pub async fn resize_session(
+    _tier: RequireFullAccess,
+    needs_approval: OptionalNeedsApproval,
+    client_ip: ClientIp,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<ResizeBody>,
-) -> Result<Json<crate::store::sessions::TerminalSessionRecord>, (StatusCode, Json<serde_json::Value>)>
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
 {
+    if needs_approval.0 {
+        let host_id = state
+            .store
+            .resolve_host_id_by_ip(&client_ip.0)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        let expires_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        let body_json = serde_json::to_string(&serde_json::json!({
+            "cols": body.cols,
+            "rows": body.rows,
+        }))
+        .ok();
+        let path = format!("/api/terminal/sessions/{id}/resize");
+        if let Ok(approval) = state.store.create_approval(
+            &approval_id,
+            &host_id,
+            "POST",
+            &path,
+            body_json.as_deref(),
+            &expires_at,
+        ) {
+            return Ok(Json(serde_json::json!({
+                "approvalRequired": true,
+                "approvalId": approval.id,
+                "expiresAt": approval.expires_at,
+            })));
+        }
+    }
+
     state
         .manager
         .resize_session(&id, body.cols, body.rows)
         .await
-        .map(Json)
+        .map(|rec| Json(serde_json::to_value(rec).unwrap_or_default()))
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -243,15 +364,45 @@ pub async fn resize_session(
 // ---------------------------------------------------------------------------
 
 pub async fn terminate_session(
+    _tier: RequireFullAccess,
+    needs_approval: OptionalNeedsApproval,
+    client_ip: ClientIp,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<crate::store::sessions::TerminalSessionRecord>, (StatusCode, Json<serde_json::Value>)>
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
 {
+    if needs_approval.0 {
+        let host_id = state
+            .store
+            .resolve_host_id_by_ip(&client_ip.0)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        let expires_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        let path = format!("/api/terminal/sessions/{id}/terminate");
+        if let Ok(approval) = state.store.create_approval(
+            &approval_id,
+            &host_id,
+            "POST",
+            &path,
+            None,
+            &expires_at,
+        ) {
+            return Ok(Json(serde_json::json!({
+                "approvalRequired": true,
+                "approvalId": approval.id,
+                "expiresAt": approval.expires_at,
+            })));
+        }
+    }
+
     state
         .manager
         .terminate_session(&id)
         .await
-        .map(Json)
+        .map(|rec| Json(serde_json::to_value(rec).unwrap_or_default()))
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -264,7 +415,9 @@ pub async fn terminate_session(
 // GET /api/system/hardware
 // ---------------------------------------------------------------------------
 
-pub async fn system_hardware() -> Json<crate::hardware::MachineInfo> {
+pub async fn system_hardware(
+    _tier: RequireReadOnly,
+) -> Json<crate::hardware::MachineInfo> {
     Json(crate::hardware::collect_machine_info())
 }
 
@@ -273,6 +426,7 @@ pub async fn system_hardware() -> Json<crate::hardware::MachineInfo> {
 // ---------------------------------------------------------------------------
 
 pub async fn system_hardware_status(
+    _tier: RequireReadOnly,
     State(state): State<AppState>,
 ) -> Json<crate::hardware::MachineStatus> {
     let sessions = state.store.list_terminal_sessions().unwrap_or_default();
@@ -285,6 +439,7 @@ pub async fn system_hardware_status(
 // ---------------------------------------------------------------------------
 
 pub async fn list_hosts(
+    _tier: RequireReadOnly,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::store::hosts::KnownHost>>, (StatusCode, Json<serde_json::Value>)> {
     state.store.list_known_hosts().map(Json).map_err(|e| {
@@ -306,16 +461,53 @@ pub struct AddHostBody {
 }
 
 pub async fn add_host(
+    _tier: RequireFullAccess,
+    needs_approval: OptionalNeedsApproval,
+    client_ip: ClientIp,
     State(state): State<AppState>,
     Json(body): Json<AddHostBody>,
-) -> Result<(StatusCode, Json<crate::store::hosts::KnownHost>), (StatusCode, Json<serde_json::Value>)>
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>
 {
+    if needs_approval.0 {
+        let host_id = state
+            .store
+            .resolve_host_id_by_ip(&client_ip.0)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        let expires_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        let body_json = serde_json::to_string(&serde_json::json!({
+            "name": body.name,
+            "tailscaleIp": body.tailscale_ip,
+        }))
+        .ok();
+        if let Ok(approval) = state.store.create_approval(
+            &approval_id,
+            &host_id,
+            "POST",
+            "/api/hosts",
+            body_json.as_deref(),
+            &expires_at,
+        ) {
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "approvalRequired": true,
+                    "approvalId": approval.id,
+                    "expiresAt": approval.expires_at,
+                })),
+            ));
+        }
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
     let url = format!("http://{}:8787", body.tailscale_ip);
     state
         .store
         .add_known_host(&id, &body.name, &body.tailscale_ip, &url)
-        .map(|h| (StatusCode::CREATED, Json(h)))
+        .map(|h| (StatusCode::CREATED, Json(serde_json::to_value(h).unwrap_or_default())))
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -329,9 +521,39 @@ pub async fn add_host(
 // ---------------------------------------------------------------------------
 
 pub async fn remove_host(
+    _tier: RequireFullAccess,
+    needs_approval: OptionalNeedsApproval,
+    client_ip: ClientIp,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    if needs_approval.0 {
+        let host_id = state
+            .store
+            .resolve_host_id_by_ip(&client_ip.0)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        let expires_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        let path = format!("/api/hosts/{id}");
+        if state
+            .store
+            .create_approval(
+                &approval_id,
+                &host_id,
+                "DELETE",
+                &path,
+                None,
+                &expires_at,
+            )
+            .is_ok()
+        {
+            return Ok(StatusCode::ACCEPTED);
+        }
+    }
+
     state
         .store
         .remove_known_host(&id)

@@ -52,7 +52,13 @@ fn forbidden_response(message: &str) -> Response {
         .into_response()
 }
 
+/// Marker extension: the request came from an approval-required peer.
+#[derive(Debug, Clone, Copy)]
+pub struct NeedsApproval;
+
 /// Extractor that passes only if the peer's tier >= FullAccess.
+/// For `ApprovalRequired` peers, the request is allowed through but
+/// `NeedsApproval` is inserted into extensions so write handlers can queue it.
 pub struct RequireFullAccess;
 
 impl<S> FromRequestParts<S> for RequireFullAccess
@@ -68,11 +74,45 @@ where
             .copied()
             .unwrap_or(PeerTier::NoAccess);
 
-        if tier >= PeerTier::FullAccess {
-            Ok(RequireFullAccess)
-        } else {
-            Err(forbidden_response("full-access tier required"))
+        match tier {
+            PeerTier::FullAccess => Ok(RequireFullAccess),
+            PeerTier::ApprovalRequired => {
+                parts.extensions.insert(NeedsApproval);
+                Ok(RequireFullAccess)
+            }
+            _ => Err(forbidden_response("full-access tier required")),
         }
+    }
+}
+
+/// Extractor that reports whether the current request needs approval queueing.
+pub struct OptionalNeedsApproval(pub bool);
+
+impl<S> FromRequestParts<S> for OptionalNeedsApproval
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(OptionalNeedsApproval(
+            parts.extensions.get::<NeedsApproval>().is_some(),
+        ))
+    }
+}
+
+impl<S> FromRequestParts<S> for ClientIp
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(parts
+            .extensions
+            .get::<ClientIp>()
+            .cloned()
+            .unwrap_or_else(|| ClientIp(String::new())))
     }
 }
 

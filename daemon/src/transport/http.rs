@@ -991,6 +991,7 @@ pub async fn list_hosts(
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AddHostBody {
     pub name: String,
     pub tailscale_ip: String,

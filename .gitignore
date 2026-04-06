@@ -23,3 +23,6 @@ dist/
 # Rust / daemon
 daemon/target/
 .worktrees/
+
+.superpowers/
+docs/superpowers/

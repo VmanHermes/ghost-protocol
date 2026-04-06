@@ -145,7 +145,7 @@ export type ConversationDetail = {
   runs: RunRecord[];
 };
 
-export type MainView = "agents" | "chat" | "terminal" | "logs" | "settings";
+export type MainView = "agents" | "logs" | "settings";
 
 // --- Local terminal types (Tauri PTY) ---
 

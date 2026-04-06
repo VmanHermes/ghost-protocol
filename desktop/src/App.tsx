@@ -6,20 +6,17 @@ import type {
   DiscoveredPeer,
   HostConnection,
   LocalTerminalSession,
+  MainView,
   SavedHost,
   TerminalSession,
 } from "./types";
 import { Sidebar } from "./components/Sidebar";
-import { TerminalWorkspace } from "./components/TerminalWorkspace";
 import { LogViewer } from "./components/LogViewer";
 import { RightPanel } from "./components/RightPanel";
 import { PermissionsTab } from "./components/PermissionsTab";
 import "./App.css";
 
-import { ChatView } from "./components/ChatView";
 import { AgentsView } from "./components/AgentsView";
-
-type MainView = "agents" | "chat" | "terminal" | "logs" | "settings";
 
 const LOCAL_DAEMON = "http://127.0.0.1:8787";
 
@@ -176,68 +173,6 @@ function App() {
 
   // --- Action handlers ---
 
-  const handleCreateRemoteSession = useCallback(async (hostId: string, mode: "agent" | "rescue_shell" | "project") => {
-    const host = hosts.find((h) => h.id === hostId);
-    if (!host) {
-      appLog.error("session", `No host found for id=${hostId}`);
-      return;
-    }
-    appLog.info("session", `Creating ${mode} session on ${host.name} (${host.url})...`);
-    try {
-      const session = await api<TerminalSession>(host.url, "/api/terminal/sessions", {
-        method: "POST",
-        body: JSON.stringify({ mode }),
-      });
-      appLog.info("session", `Session created: ${session.id} (${mode}) on ${host.name}`);
-      setConnections((prev) => {
-        const next = new Map(prev);
-        const existing = prev.get(hostId);
-        if (existing) {
-          next.set(hostId, { ...existing, sessions: [...(existing.sessions ?? []), session] });
-        }
-        return next;
-      });
-      setActiveTerminalSessionId(session.id);
-      setMainView("terminal");
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      appLog.error("session", `Failed to create ${mode} session on ${host.name}: ${msg}`);
-      setActionError(msg);
-    }
-  }, [hosts]);
-
-  const handleRemoteSessionStatusChange = useCallback((session: TerminalSession) => {
-    if (!activeHostId) return;
-    const hostId = activeHostId;
-    setConnections((prev) => {
-      const conn = prev.get(hostId);
-      if (!conn?.sessions) return prev;
-      const updatedSessions = conn.sessions.map((s) =>
-        s.id === session.id ? session : s,
-      );
-      const next = new Map(prev);
-      next.set(hostId, { ...conn, sessions: updatedSessions });
-      return next;
-    });
-  }, [activeHostId]);
-
-  const handleKillRemoteSession = useCallback(async (sessionId: string) => {
-    if (!activeHostId || !activeHostUrl) return;
-    const hostId = activeHostId;
-    const url = activeHostUrl;
-    try {
-      await api(url, `/api/terminal/sessions/${sessionId}/terminate`, { method: "POST" });
-      const sessions = await api<TerminalSession[]>(url, "/api/terminal/sessions");
-      updateConnection(hostId, { sessions });
-      if (activeTerminalSessionId === sessionId) {
-        const nextActive = sessions.find((s) => s.id !== sessionId && (s.status === "created" || s.status === "running"));
-        setActiveTerminalSessionId(nextActive?.id ?? null);
-      }
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Terminate session failed");
-    }
-  }, [activeHostId, activeHostUrl, activeTerminalSessionId, updateConnection]);
-
   const handleCreateLocalSession = useCallback(async () => {
     if (!isTauri()) return;
     try {
@@ -252,38 +187,13 @@ function App() {
       };
       setLocalSessions((prev) => [...prev, session]);
       setActiveTerminalSessionId(sessionId);
-      setMainView("terminal");
+      setMainView("agents");
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       appLog.error("app", `Failed to spawn local terminal: ${msg}`);
       setActionError(`Failed to spawn local terminal: ${msg}`);
     }
   }, []);
-
-  const handleLocalSessionStatusChange = useCallback((session: LocalTerminalSession) => {
-    setLocalSessions((prev) =>
-      prev.map((s) => (s.id === session.id ? session : s)),
-    );
-  }, []);
-
-  const handleKillLocalSession = useCallback(async (sessionId: string) => {
-    if (!isTauri()) return;
-    const existing = localSessions.find((s) => s.id === sessionId);
-    if (!existing || existing.status !== "running") return;
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("pty_kill", { sessionId });
-      setLocalSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: "terminated" as const } : s)),
-      );
-      if (activeTerminalSessionId === sessionId) {
-        const remaining = localSessions.filter((s) => s.id !== sessionId && s.status === "running");
-        setActiveTerminalSessionId(remaining[0]?.id ?? null);
-      }
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Kill local session failed");
-    }
-  }, [activeTerminalSessionId, localSessions]);
 
   const handleAddHost = useCallback(async (name: string, url: string) => {
     try {
@@ -347,19 +257,6 @@ function App() {
     [hosts, connections],
   );
 
-  // Gather all remote sessions across all hosts for TerminalWorkspace
-  const allRemoteSessions = useMemo(() => {
-    const result: Array<{ hostId: string; hostName: string; session: TerminalSession }> = [];
-    for (const host of hosts) {
-      const conn = connections.get(host.id);
-      if (!conn?.sessions) continue;
-      for (const session of conn.sessions) {
-        result.push({ hostId: host.id, hostName: host.name, session });
-      }
-    }
-    return result;
-  }, [hosts, connections]);
-
   // Flat list of all remote sessions for AgentsView
   const allFlatSessions: TerminalSession[] = useMemo(() => {
     const result: TerminalSession[] = [];
@@ -401,27 +298,8 @@ function App() {
           }}
         />
 
-        <div style={{ display: mainView === "chat" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
-          <ChatView daemonUrl={LOCAL_DAEMON} hosts={hosts} />
-        </div>
 
-        <div style={{ display: mainView === "terminal" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
-          <TerminalWorkspace
-            hosts={hosts}
-            hostConnections={connections}
-            localSessions={localSessions}
-            allRemoteSessions={allRemoteSessions}
-            activeSessionId={activeTerminalSessionId}
-            visible={mainView === "terminal"}
-            onSelect={setActiveTerminalSessionId}
-            onCreateRemoteSession={(hostId, mode) => void handleCreateRemoteSession(hostId, mode)}
-            onCreateLocalSession={() => void handleCreateLocalSession()}
-            onRemoteSessionStatusChange={handleRemoteSessionStatusChange}
-            onLocalSessionStatusChange={handleLocalSessionStatusChange}
-            onKillRemoteSession={(id) => void handleKillRemoteSession(id)}
-            onKillLocalSession={(id) => void handleKillLocalSession(id)}
-          />
-        </div>
+
         <div style={{ display: mainView === "logs" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
           <LogViewer baseUrl={activeHostUrl} />
         </div>

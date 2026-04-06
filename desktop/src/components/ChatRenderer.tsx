@@ -9,7 +9,7 @@ type Props = {
   onSendMessage: (content: string) => void;
 };
 
-export function ChatRenderer({ messages, streamingDelta, streamingMessageId, status, onSendMessage }: Props) {
+export function ChatRenderer({ messages, streamingDelta, streamingMessageId: _streamingMessageId, status, onSendMessage }: Props) {
   const [draft, setDraft] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);

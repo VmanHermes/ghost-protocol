@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (daemon + CLI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            daemon/target
+            cli/target
+          key: rust-test-${{ runner.os }}-${{ hashFiles('daemon/Cargo.lock', 'cli/Cargo.lock') }}
+          restore-keys: rust-test-${{ runner.os }}-
+
+      - name: Run daemon tests
+        working-directory: daemon
+        run: cargo test --tests -- --test-threads=1
+
+      - name: Check CLI
+        working-directory: cli
+        run: cargo check
+
+  typecheck:
+    name: Typecheck (desktop)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: desktop
+        run: npx tsc --noEmit

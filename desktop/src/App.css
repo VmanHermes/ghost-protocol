@@ -1755,3 +1755,14 @@ textarea { resize: vertical; }
 .session-mode-btn:not(:first-child) { border-left: 1px solid var(--border); }
 .session-mode-active { background: var(--accent-blue); color: #fff; font-weight: 500; }
 .session-delegated-badge { font-size: 0.7rem; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--text-muted); }
+
+/* ------------------------------------------------------------------ */
+/* Agents View                                                         */
+/* ------------------------------------------------------------------ */
+.agents-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.agents-topbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
+.agents-topbar select { min-width: 200px; }
+.agents-main { display: flex; flex: 1; min-height: 0; }
+.agents-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.agents-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-secondary); font-size: 0.9rem; }
+.agents-empty a { color: var(--accent-blue); text-decoration: none; font-weight: 500; }

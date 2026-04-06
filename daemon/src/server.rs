@@ -19,6 +19,7 @@ use crate::transport::ws;
 
 pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Open store
+    info!(db_path = %settings.db_path.display(), "opening store");
     let store = Store::open(&settings.db_path)?;
 
     // 2. Create terminal manager
@@ -39,7 +40,7 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                 .build()
                 .unwrap_or_default();
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
                 // Phase 1: Discover new peers via Tailscale
                 let peers = crate::host::detect::list_tailscale_peers();
@@ -50,11 +51,18 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                     if store.is_known_or_dismissed(&peer.ip).unwrap_or(true) {
                         continue;
                     }
+                    let already_discovered = store
+                        .get_discovery(&peer.ip)
+                        .ok()
+                        .flatten()
+                        .is_some();
                     let health_url = format!("http://{}:8787/health", peer.ip);
                     match client.get(&health_url).send().await {
                         Ok(resp) if resp.status().is_success() => {
                             store.upsert_discovered_peer(&peer.ip, &peer.name).ok();
-                            tracing::info!(peer = %peer.name, ip = %peer.ip, "discovered new Ghost Protocol peer");
+                            if !already_discovered {
+                                tracing::info!(peer = %peer.name, ip = %peer.ip, "discovered new Ghost Protocol peer");
+                            }
                         }
                         _ => {}
                     }
@@ -63,8 +71,9 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                 // Phase 2: Poll known hosts (existing logic)
                 if let Ok(hosts) = store.list_known_hosts() {
                     for host in hosts {
+                        let old_status = &host.status;
                         let url = format!("{}/api/system/hardware", host.url);
-                        let status = match client.get(&url).send().await {
+                        let new_status = match client.get(&url).send().await {
                             Ok(resp) if resp.status().is_success() => {
                                 let caps = resp.json::<serde_json::Value>().await.ok().map(|v| {
                                     let agents_data: Option<Vec<crate::hardware::agents::AgentInfo>> = v["tools"]["agents"]
@@ -86,7 +95,9 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                                 "offline"
                             }
                         };
-                        tracing::debug!(host = %host.name, status, "health poll");
+                        if new_status != old_status {
+                            tracing::info!(host = %host.name, old_status, new_status, "host status changed");
+                        }
                     }
                 }
             }

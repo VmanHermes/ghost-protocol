@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+use tracing::info;
 
 use crate::chat::manager::ChatProcessManager;
 use crate::host::logs::LogBuffer;
@@ -1044,7 +1045,10 @@ pub async fn add_host(
     state
         .store
         .add_known_host(&id, &body.name, &body.tailscale_ip, &url)
-        .map(|h| (StatusCode::CREATED, Json(serde_json::to_value(h).unwrap_or_default())))
+        .map(|h| {
+            info!(name = %body.name, ip = %body.tailscale_ip, "host added");
+            (StatusCode::CREATED, Json(serde_json::to_value(h).unwrap_or_default()))
+        })
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1094,7 +1098,10 @@ pub async fn remove_host(
     state
         .store
         .remove_known_host(&id)
-        .map(|_| StatusCode::NO_CONTENT)
+        .map(|_| {
+            info!(host_id = %id, "host removed");
+            StatusCode::NO_CONTENT
+        })
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1193,7 +1200,10 @@ pub async fn set_permission(
     state
         .store
         .set_peer_permission(&id, &body.tier)
-        .map(|_| StatusCode::NO_CONTENT)
+        .map(|_| {
+            info!(host_id = %id, tier = %body.tier, "permission changed");
+            StatusCode::NO_CONTENT
+        })
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1432,6 +1442,7 @@ pub async fn approve_approval(
             )
         })?;
 
+    info!(approval_id = %id, method = %approval.method, path = %approval.path, "approval granted and replayed");
     Ok(Json(serde_json::json!({ "result": result_value })))
 }
 
@@ -2628,7 +2639,10 @@ pub async fn deny_approval(
     state
         .store
         .resolve_approval(&id, "denied", None)
-        .map(|_| StatusCode::NO_CONTENT)
+        .map(|_| {
+            info!(approval_id = %id, "approval denied");
+            StatusCode::NO_CONTENT
+        })
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

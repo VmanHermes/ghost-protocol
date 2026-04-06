@@ -83,9 +83,11 @@ pub async fn ws_upgrade(
 
 async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
     if tier == PeerTier::NoAccess {
+        warn!("WebSocket connection denied (no-access tier)");
         let _ = send_error(&mut socket, "no-access: WebSocket connection denied").await;
         return;
     }
+    debug!(tier = tier.as_str(), "WebSocket connected");
 
     let mut broadcast_rx: Option<broadcast::Receiver<TerminalChunkRecord>> = None;
     let mut current_session_id: Option<String> = None;

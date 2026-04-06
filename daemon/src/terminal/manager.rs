@@ -99,6 +99,7 @@ impl TerminalManager {
 
         // 2. Create tmux session
         if let Err(error) = tmux::new_session(&id, &workdir, &shell) {
+            tracing::error!(session_id = %id, error = %error, "failed to create tmux session");
             let now = Utc::now().to_rfc3339();
             let _ = self.store.update_terminal_session(
                 &id,
@@ -188,6 +189,7 @@ Commands:\n\
                     continue;
                 }
 
+                info!(session_id = %session_id, "terminal session exited");
                 let now = Utc::now().to_rfc3339();
                 let _ = store.update_terminal_session(
                     &session_id,
@@ -330,6 +332,7 @@ Commands:\n\
             )
             .map_err(|e| format!("db error: {e}"))?;
 
+        info!(session_id = %session_id, "terminal session terminated");
         self.store
             .get_terminal_session(session_id)
             .map_err(|e| format!("db error: {e}"))?

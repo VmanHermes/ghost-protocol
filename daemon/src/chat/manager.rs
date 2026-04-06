@@ -345,6 +345,7 @@ impl ChatProcessManager {
             let mut managed = process.lock().await;
             managed.child.kill().await.map_err(|e| format!("kill failed: {e}"))?;
         }
+        info!(session_id = %session_id, "chat session killed");
         self.broadcasters.lock().await.remove(session_id);
         let finished_at = chrono::Utc::now().to_rfc3339();
         self.store

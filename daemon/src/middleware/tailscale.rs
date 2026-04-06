@@ -5,6 +5,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use tracing::warn;
 
 use crate::config::Settings;
 use crate::middleware::permissions::{ClientIp, IsLocalhost, PeerTier};
@@ -61,6 +62,7 @@ pub async fn tailscale_guard(
         return next.run(request).await;
     }
 
+    warn!(ip = %ip, "request blocked: not in configured allowlist");
     (
         StatusCode::FORBIDDEN,
         axum::Json(serde_json::json!({

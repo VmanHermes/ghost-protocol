@@ -3,6 +3,7 @@ use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// Marker extension: was the request from loopback?
 #[derive(Debug, Clone, Copy)]
@@ -80,7 +81,11 @@ where
                 parts.extensions.insert(NeedsApproval);
                 Ok(RequireFullAccess)
             }
-            _ => Err(forbidden_response("full-access tier required")),
+            _ => {
+                let ip = parts.extensions.get::<ClientIp>().map(|c| c.0.as_str()).unwrap_or("unknown");
+                warn!(ip, tier = tier.as_str(), required = "full-access", "permission denied");
+                Err(forbidden_response("full-access tier required"))
+            }
         }
     }
 }
@@ -137,6 +142,8 @@ where
         if tier >= PeerTier::ReadOnly {
             Ok(RequireReadOnly)
         } else {
+            let ip = parts.extensions.get::<ClientIp>().map(|c| c.0.as_str()).unwrap_or("unknown");
+            warn!(ip, tier = tier.as_str(), required = "read-only", "permission denied");
             Err(forbidden_response("read-only tier required"))
         }
     }

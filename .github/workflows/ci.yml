@@ -19,15 +19,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            daemon/target
-            cli/target
-          key: rust-test-${{ runner.os }}-${{ hashFiles('daemon/Cargo.lock', 'cli/Cargo.lock') }}
-          restore-keys: rust-test-${{ runner.os }}-
+          workspaces: |
+            daemon -> target
+            cli -> target
 
       - name: Run daemon tests
         working-directory: daemon

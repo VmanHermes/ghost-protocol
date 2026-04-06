@@ -2,14 +2,25 @@ pub mod generic;
 pub mod claude;
 pub mod ollama;
 
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ParsedMessage {
     pub role: String,
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub enum AdapterEvent {
+    Delta(String),
+    Message(ParsedMessage),
+    Status(String),
+    Meta { tokens: Option<u64>, context_pct: Option<f64> },
+}
+
 pub trait ChatAdapter: Send + Sync {
-    fn feed(&mut self, text: &str) -> Vec<ParsedMessage>;
-    fn flush(&mut self) -> Vec<ParsedMessage>;
+    fn feed(&mut self, text: &str) -> Vec<AdapterEvent>;
+    fn flush(&mut self) -> Vec<AdapterEvent>;
 }
 
 pub fn adapter_for_agent(agent_id: &str) -> Box<dyn ChatAdapter> {

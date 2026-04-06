@@ -94,9 +94,6 @@ if [[ "$SKIP_PACKAGE" != true ]]; then
   GHOST_TAURI_BUNDLES=deb bash "$ROOT_DIR/scripts/package.sh" --arch
 fi
 
-TARBALL_PATH="$ROOT_DIR/dist/ghost-protocol-${VERSION}-linux-x86_64.tar.gz"
-DEB_PATH="$ROOT_DIR/desktop/src-tauri/target/release/bundle/deb/Ghost Protocol_${VERSION}_amd64.deb"
-
 echo ""
 echo "==> Release ${VERSION} is prepared."
 echo ""
@@ -104,17 +101,11 @@ echo "Next steps:"
 echo "  1. Review the diff:"
 echo "     git diff --stat"
 echo "  2. Commit the release changes:"
-echo "     git add VERSION README.md docs/project-plan.md scripts/release.sh scripts/sync-version.sh scripts/version.sh daemon/Cargo.toml cli/Cargo.toml desktop/package.json desktop/package-lock.json desktop/src-tauri/Cargo.toml desktop/src-tauri/tauri.conf.json desktop/src-tauri/.gitignore scripts/package.sh"
-echo "     git commit -m \"chore: release v${VERSION}\""
-echo "  3. Push the branch:"
+echo "     git add -A && git commit -m \"chore: release v${VERSION}\""
+echo "  3. Push to main (CI will auto-tag and create GitHub Release):"
 echo "     git push origin main"
-echo "  4. Create and push the tag:"
-echo "     git tag v${VERSION}"
-echo "     git push origin v${VERSION}"
-echo "  5. Create the GitHub release and upload:"
-if [[ "$SKIP_PACKAGE" != true ]]; then
-  echo "     ${TARBALL_PATH}"
-  echo "     ${DEB_PATH}"
-else
-  echo "     Build artifact not created because --skip-package was used."
-fi
+echo ""
+echo "  GitHub Actions will:"
+echo "    - Build Linux (.deb + Arch tarball), macOS (.dmg), Windows (.exe)"
+echo "    - Create tag v${VERSION}"
+echo "    - Publish GitHub Release with all artifacts"

@@ -1,0 +1,262 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  detect:
+    name: Detect version change
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if VERSION changed
+        id: check
+        run: |
+          if git diff HEAD~1 --name-only | grep -q '^VERSION$'; then
+            VERSION=$(tr -d '[:space:]' < VERSION)
+            echo "VERSION file changed -> ${VERSION}"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION file not changed, skipping release"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            bundle_type: deb
+          - platform: macos
+            os: macos-latest
+            rust_target: aarch64-apple-darwin
+            bundle_type: dmg
+          - platform: windows
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            bundle_type: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            daemon/target
+            cli/target
+          key: rust-release-${{ matrix.platform }}-${{ hashFiles('daemon/Cargo.lock', 'cli/Cargo.lock') }}
+          restore-keys: rust-release-${{ matrix.platform }}-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build daemon
+        working-directory: daemon
+        run: cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Prepare sidecars
+        shell: bash
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            EXT=".exe"
+          else
+            EXT=""
+          fi
+          cp "daemon/target/${{ matrix.rust_target }}/release/ghost-protocol-daemon${EXT}" \
+             "desktop/src-tauri/binaries/ghost-protocol-daemon-${{ matrix.rust_target }}${EXT}"
+          cp "cli/target/${{ matrix.rust_target }}/release/ghost${EXT}" \
+             "desktop/src-tauri/binaries/ghost-${{ matrix.rust_target }}${EXT}"
+
+      - name: Build PWA
+        working-directory: desktop
+        run: npm run build:pwa
+
+      - name: Copy PWA to Tauri resources
+        shell: bash
+        run: |
+          rm -rf desktop/src-tauri/resources/web
+          mkdir -p desktop/src-tauri/resources/web
+          cp -r desktop/dist-pwa/* desktop/src-tauri/resources/web/
+
+      - name: Build Tauri app
+        working-directory: desktop
+        run: npx tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_type }}
+
+      - name: Build Arch tarball
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          DIST="dist/ghost-protocol-${VERSION}"
+          rm -rf "$DIST"
+          mkdir -p "$DIST"
+
+          cp "desktop/src-tauri/target/${{ matrix.rust_target }}/release/ghost_protocol" "$DIST/ghost-protocol"
+          cp "daemon/target/${{ matrix.rust_target }}/release/ghost-protocol-daemon" "$DIST/ghost-protocol-daemon"
+          cp "cli/target/${{ matrix.rust_target }}/release/ghost" "$DIST/ghost"
+          cp desktop/src-tauri/icons/icon.png "$DIST/ghost-protocol.png"
+
+          if [ -d desktop/dist-pwa ]; then
+            mkdir -p "$DIST/web"
+            cp -r desktop/dist-pwa/* "$DIST/web/"
+          fi
+
+          cat > "$DIST/ghost-protocol.desktop" << 'DESKTOP'
+          [Desktop Entry]
+          Name=Ghost Protocol
+          Comment=Developer Console
+          Exec=env WEBKIT_DISABLE_COMPOSITING_MODE=1 GDK_BACKEND=x11 /usr/local/bin/ghost-protocol
+          Icon=/usr/local/share/icons/ghost-protocol.png
+          Terminal=false
+          Type=Application
+          Categories=Development;
+          DESKTOP
+
+          cat > "$DIST/install.sh" << 'INSTALL'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          echo "==> Checking dependencies..."
+          MISSING=()
+          pacman -Q webkit2gtk-4.1 &>/dev/null || MISSING+=(webkit2gtk-4.1)
+          pacman -Q gtk3 &>/dev/null || MISSING+=(gtk3)
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "    Installing: ${MISSING[*]}"
+            sudo pacman -S --needed --noconfirm "${MISSING[@]}"
+          else
+            echo "    All dependencies present."
+          fi
+          echo "==> Installing Ghost Protocol..."
+          sudo install -Dm755 "$SCRIPT_DIR/ghost-protocol" /usr/local/bin/ghost-protocol
+          sudo install -Dm755 "$SCRIPT_DIR/ghost-protocol-daemon" /usr/local/bin/ghost-protocol-daemon
+          sudo install -Dm755 "$SCRIPT_DIR/ghost" /usr/local/bin/ghost
+          sudo install -Dm644 "$SCRIPT_DIR/ghost-protocol.png" /usr/local/share/icons/ghost-protocol.png
+          sudo install -Dm644 "$SCRIPT_DIR/ghost-protocol.desktop" /usr/share/applications/ghost-protocol.desktop
+          if [ -d "$SCRIPT_DIR/web" ]; then
+            echo "==> Installing PWA web files..."
+            sudo mkdir -p /usr/local/share/ghost-protocol/web
+            sudo cp -r "$SCRIPT_DIR/web/"* /usr/local/share/ghost-protocol/web/
+          fi
+          echo "==> Done! Launch from app menu or run: ghost-protocol"
+          INSTALL
+          chmod +x "$DIST/install.sh"
+
+          cat > "$DIST/uninstall.sh" << 'UNINSTALL'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          echo "==> Removing Ghost Protocol..."
+          sudo rm -f /usr/local/bin/ghost-protocol
+          sudo rm -f /usr/local/bin/ghost-protocol-daemon
+          sudo rm -f /usr/local/bin/ghost
+          sudo rm -f /usr/local/share/icons/ghost-protocol.png
+          sudo rm -f /usr/share/applications/ghost-protocol.desktop
+          sudo rm -rf /usr/local/share/ghost-protocol
+          echo "==> Done."
+          UNINSTALL
+          chmod +x "$DIST/uninstall.sh"
+
+          cd dist
+          tar czf "ghost-protocol-${VERSION}-linux-x86_64.tar.gz" "ghost-protocol-${VERSION}"
+
+      - name: Upload Linux artifacts
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghost-protocol-linux
+          path: |
+            dist/ghost-protocol-${{ needs.detect.outputs.version }}-linux-x86_64.tar.gz
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb/*.deb
+
+      - name: Upload macOS artifacts
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghost-protocol-macos
+          path: desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
+
+      - name: Upload Windows artifacts
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghost-protocol-windows
+          path: desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/nsis/*.exe
+
+  release:
+    name: Publish GitHub Release
+    needs: [detect, build]
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Create tag
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          # Collect all artifacts into a flat list
+          FILES=$(find artifacts -type f \( -name '*.tar.gz' -o -name '*.deb' -o -name '*.dmg' -o -name '*.exe' \))
+          echo "Uploading:"
+          echo "$FILES"
+          # shellcheck disable=SC2086
+          gh release create "v${VERSION}" \
+            --title "Ghost Protocol v${VERSION}" \
+            --generate-notes \
+            $FILES

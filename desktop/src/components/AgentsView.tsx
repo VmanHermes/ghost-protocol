@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  api,
   createChatSession,
   createCompanionTerminal,
   listAgents,
@@ -14,6 +15,7 @@ import { ChatRenderer } from "./ChatRenderer";
 import { TerminalRenderer } from "./TerminalRenderer";
 import type {
   AgentInfo,
+  HostConnection,
   LocalTerminalSession,
   ProjectRecord,
   SessionMode,
@@ -22,6 +24,9 @@ import type {
 
 type Props = {
   daemonUrl: string;
+  connections: HostConnection[];
+  activeSessionBaseUrl: string;
+  localHostName: string | null;
   sessions: TerminalSession[];
   localSessions: LocalTerminalSession[];
   activeSessionId: string | null;
@@ -30,13 +35,14 @@ type Props = {
   onCreateLocalSession: (workdir?: string | null) => Promise<LocalTerminalSession | null | undefined>;
   onTerminateLocalSession: (sessionId: string) => Promise<void>;
   onLocalSessionStatusChange: (session: LocalTerminalSession) => void;
-  onRefreshSessions: () => void;
+  onRefreshSessions: () => Promise<void>;
 };
-
-const LOCAL_DAEMON = "http://127.0.0.1:8787";
 
 export function AgentsView({
   daemonUrl,
+  connections,
+  activeSessionBaseUrl,
+  localHostName,
   sessions,
   localSessions,
   activeSessionId,
@@ -53,29 +59,96 @@ export function AgentsView({
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [launchWorkdir, setLaunchWorkdir] = useState("~");
   const [selectedMode, setSelectedMode] = useState<SessionMode>("chat");
+  const [selectedTargetId, setSelectedTargetId] = useState("local");
   const [activeMode, setActiveMode] = useState<SessionMode>("chat");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    listAgents(daemonUrl)
-      .then((items) => {
-        setAgents(items);
-        if (!selectedAgentId) {
-          setSelectedAgentId(items[0]?.id ?? "shell");
-        }
-      })
-      .catch(() => {});
-  }, [daemonUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  const activeSessions = sessions.filter((session) => session.status === "running" || session.status === "created");
+  const previousSessions = sessions.filter((session) => session.status !== "running" && session.status !== "created");
+  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
+  const isLocalSession = localSessions.some((session) => session.id === activeSessionId);
+
+  const targetOptions = useMemo(() => [
+    {
+      id: "local",
+      name: localHostName ?? "Local",
+      baseUrl: daemonUrl,
+      isLocal: true,
+    },
+    ...connections
+      .filter((connection) => connection.state === "connected")
+      .map((connection) => ({
+        id: connection.host.id,
+        name: connection.host.name,
+        baseUrl: connection.host.url,
+        isLocal: false,
+      })),
+  ], [connections, daemonUrl, localHostName]);
+
+  const selectedTarget = targetOptions.find((target) => target.id === selectedTargetId) ?? targetOptions[0];
+  const launchDaemonUrl = selectedTarget?.baseUrl ?? daemonUrl;
 
   useEffect(() => {
-    listProjects(daemonUrl).then(setProjects).catch(() => {});
-  }, [daemonUrl]);
+    if (selectedTargetId === "local") return;
+    if (!targetOptions.some((target) => target.id === selectedTargetId)) {
+      setSelectedTargetId("local");
+    }
+  }, [selectedTargetId, targetOptions]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    listAgents(launchDaemonUrl)
+      .then((items) => {
+        if (cancelled) return;
+        setAgents(items);
+        setSelectedAgentId((current) => {
+          if (current === "shell") return current;
+          if (current && items.some((agent) => agent.id === current)) return current;
+          return items[0]?.id ?? "shell";
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAgents([]);
+        setSelectedAgentId((current) => (current === "shell" ? current : "shell"));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [launchDaemonUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    listProjects(launchDaemonUrl)
+      .then((items) => {
+        if (!cancelled) {
+          setProjects(items);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjects([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [launchDaemonUrl]);
 
   useEffect(() => {
     const session = sessions.find((entry) => entry.id === activeSessionId);
     if (!session) return;
 
+    setSelectedTargetId(
+      localSessions.some((entry) => entry.id === activeSessionId)
+        ? "local"
+        : session.hostId ?? "local",
+    );
     setLaunchWorkdir(session.workdir || "~");
     setActiveMode(session.mode === "chat" ? "chat" : "terminal");
 
@@ -83,19 +156,14 @@ export function AgentsView({
       ? projects.find((project) => project.id === session.projectId)
       : projects.find((project) => project.workdir === session.workdir);
     setSelectedProjectId(matchedProject?.id ?? "");
-  }, [activeSessionId, projects, sessions]);
-
-  const activeSessions = sessions.filter((session) => session.status === "running" || session.status === "created");
-  const previousSessions = sessions.filter((session) => session.status !== "running" && session.status !== "created");
-  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
-  const isLocalSession = localSessions.some((session) => session.id === activeSessionId);
+  }, [activeSessionId, localSessions, projects, sessions]);
 
   const handleSessionRenamed = useCallback(() => {
-    onRefreshSessions();
+    void onRefreshSessions();
   }, [onRefreshSessions]);
 
   const chatSocket = useChatSocket({
-    baseUrl: LOCAL_DAEMON,
+    baseUrl: activeSessionBaseUrl,
     sessionId: activeMode === "chat" && activeSessionId && !isLocalSession ? activeSessionId : null,
     isActive: visible && activeMode === "chat" && !!activeSessionId && !isLocalSession,
     onError: setError,
@@ -117,7 +185,7 @@ export function AgentsView({
   }, [projects]);
 
   const handleNewSession = useCallback(async () => {
-    if (!selectedAgentId) return;
+    if (!selectedAgentId || !selectedTarget) return;
 
     setError(null);
     setLoading(true);
@@ -127,21 +195,35 @@ export function AgentsView({
       const projectId = selectedProjectId || undefined;
 
       if (selectedAgentId === "shell") {
-        const session = await onCreateLocalSession(workdir);
-        if (session?.id) {
+        if (selectedTarget.isLocal) {
+          const session = await onCreateLocalSession(workdir);
+          if (session?.id) {
+            onSelectSession(session.id);
+            setActiveMode("terminal");
+          }
+        } else {
+          const session = await api<TerminalSession>(launchDaemonUrl, "/api/terminal/sessions", {
+            method: "POST",
+            body: JSON.stringify({
+              mode: "terminal",
+              name: "Shell",
+              projectId,
+              workdir,
+            }),
+          });
+          await onRefreshSessions();
           onSelectSession(session.id);
           setActiveMode("terminal");
         }
       } else if (selectedMode === "chat") {
-        const result = await createChatSession(daemonUrl, selectedAgentId, projectId, workdir);
+        const result = await createChatSession(launchDaemonUrl, selectedAgentId, projectId, workdir);
         const sessionId: string = result.session?.id ?? result.session;
+        await onRefreshSessions();
         onSelectSession(sessionId);
         setActiveMode("chat");
-        onRefreshSessions();
       } else {
-        const resp = await fetch(`${daemonUrl}/api/terminal/sessions`, {
+        const session = await api<TerminalSession>(launchDaemonUrl, "/api/terminal/sessions", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mode: "agent",
             agentId: selectedAgentId,
@@ -149,10 +231,9 @@ export function AgentsView({
             workdir,
           }),
         });
-        const data = await resp.json();
-        onSelectSession(data.id);
+        await onRefreshSessions();
+        onSelectSession(session.id);
         setActiveMode("terminal");
-        onRefreshSessions();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create session");
@@ -160,7 +241,7 @@ export function AgentsView({
       setLoading(false);
     }
   }, [
-    daemonUrl,
+    launchDaemonUrl,
     launchWorkdir,
     onCreateLocalSession,
     onRefreshSessions,
@@ -168,6 +249,7 @@ export function AgentsView({
     selectedAgentId,
     selectedMode,
     selectedProjectId,
+    selectedTarget,
   ]);
 
   const handleSwitchMode = useCallback(async (newMode: SessionMode) => {
@@ -176,23 +258,23 @@ export function AgentsView({
     setError(null);
 
     try {
-      let result = await switchSessionMode(daemonUrl, activeSessionId, newMode);
+      let result = await switchSessionMode(activeSessionBaseUrl, activeSessionId, newMode);
       if (result.needsConfirmation) {
         const ok = window.confirm(result.warning ?? "Switching modes will end the current conversation. Continue?");
         if (!ok) return;
-        result = await switchSessionMode(daemonUrl, activeSessionId, newMode, true);
+        result = await switchSessionMode(activeSessionBaseUrl, activeSessionId, newMode, true);
       }
 
+      await onRefreshSessions();
       if (result.session?.id) {
         onSelectSession(result.session.id);
       }
 
       setActiveMode(newMode);
-      onRefreshSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to switch mode");
     }
-  }, [activeMode, activeSessionId, daemonUrl, onRefreshSessions, onSelectSession]);
+  }, [activeMode, activeSessionBaseUrl, activeSessionId, onRefreshSessions, onSelectSession]);
 
   const handleOpenCompanionTerminal = useCallback(async () => {
     if (!activeSessionId) return;
@@ -200,14 +282,14 @@ export function AgentsView({
     setError(null);
 
     try {
-      const session = await createCompanionTerminal(daemonUrl, activeSessionId);
+      const session = await createCompanionTerminal(activeSessionBaseUrl, activeSessionId);
+      await onRefreshSessions();
       onSelectSession(session.id);
       setActiveMode("terminal");
-      onRefreshSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open companion terminal");
     }
-  }, [activeSessionId, daemonUrl, onRefreshSessions, onSelectSession]);
+  }, [activeSessionBaseUrl, activeSessionId, onRefreshSessions, onSelectSession]);
 
   const handleReopenSession = useCallback(async () => {
     if (!activeSessionId || !activeSession) return;
@@ -224,21 +306,17 @@ export function AgentsView({
         return;
       }
 
-      if (activeSession.hostId && activeSession.hostName !== "local") {
-        throw new Error("Reopen is currently only supported for local daemon sessions.");
-      }
-
-      const reopened = await reopenWorkSession(daemonUrl, activeSessionId);
+      const reopened = await reopenWorkSession(activeSessionBaseUrl, activeSessionId);
+      await onRefreshSessions();
       onSelectSession(reopened.id);
       setActiveMode(reopened.mode === "chat" ? "chat" : "terminal");
-      onRefreshSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reopen session");
     }
   }, [
     activeSession,
+    activeSessionBaseUrl,
     activeSessionId,
-    daemonUrl,
     isLocalSession,
     onCreateLocalSession,
     onRefreshSessions,
@@ -252,8 +330,10 @@ export function AgentsView({
       if (isLocalSession) {
         await onTerminateLocalSession(activeSessionId);
       } else {
-        await fetch(`${daemonUrl}/api/terminal/sessions/${activeSessionId}/terminate`, { method: "POST" });
-        onRefreshSessions();
+        await api<TerminalSession>(activeSessionBaseUrl, `/api/terminal/sessions/${activeSessionId}/terminate`, {
+          method: "POST",
+        });
+        await onRefreshSessions();
       }
 
       onSelectSession(null);
@@ -261,7 +341,7 @@ export function AgentsView({
     } catch {
       // ignore for now
     }
-  }, [activeSessionId, daemonUrl, isLocalSession, onRefreshSessions, onSelectSession, onTerminateLocalSession]);
+  }, [activeSessionBaseUrl, activeSessionId, isLocalSession, onRefreshSessions, onSelectSession, onTerminateLocalSession]);
 
   if (!visible) return null;
 
@@ -271,10 +351,23 @@ export function AgentsView({
     <div className="agents-view">
       <div className="agents-topbar">
         <select
+          aria-label="Target machine"
+          value={selectedTargetId}
+          onChange={(e) => setSelectedTargetId(e.target.value)}
+        >
+          {targetOptions.map((target) => (
+            <option key={target.id} value={target.id}>
+              {target.isLocal ? `${target.name} (local)` : target.name}
+            </option>
+          ))}
+        </select>
+
+        <select
+          aria-label="Agent"
           value={selectedAgentId ?? ""}
           onChange={(e) => setSelectedAgentId(e.target.value || null)}
         >
-          <option value="shell">Shell (local)</option>
+          <option value="shell">{selectedTarget?.isLocal ? "Shell (local)" : "Shell"}</option>
           {agents.map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name} {agent.version ? `v${agent.version}` : ""} ({agent.agentType})
@@ -372,7 +465,7 @@ export function AgentsView({
                 />
               ) : (
                 <TerminalRenderer
-                  baseUrl={LOCAL_DAEMON}
+                  baseUrl={activeSessionBaseUrl}
                   sessionId={activeSessionId}
                   isLocal={isLocalSession}
                   isActive={visible}
@@ -381,7 +474,7 @@ export function AgentsView({
                     if (isLocalSession) {
                       onLocalSessionStatusChange(session as LocalTerminalSession);
                     } else {
-                      onRefreshSessions();
+                      void onRefreshSessions();
                     }
                   }}
                   onError={setError}

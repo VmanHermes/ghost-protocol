@@ -172,23 +172,38 @@ function App() {
     }
   }, [checkHostHealth]);
 
-  const loadHostData = useCallback(async (hostId: string, url: string) => {
+  const loadHostData = useCallback(async (host: SavedHost) => {
     try {
       const [sessionsResult, machineInfoResult, machineStatusResult] = await Promise.allSettled([
-        api<TerminalSession[]>(url, "/api/terminal/sessions"),
-        getMachineInfo(url),
-        getMachineStatus(url),
+        api<TerminalSession[]>(host.url, "/api/terminal/sessions"),
+        getMachineInfo(host.url),
+        getMachineStatus(host.url),
       ]);
 
-      updateConnection(hostId, {
-        sessions: sessionsResult.status === "fulfilled" ? sessionsResult.value : null,
+      updateConnection(host.id, {
+        sessions: sessionsResult.status === "fulfilled"
+          ? sessionsResult.value.map((session) => ({
+            ...session,
+            hostId: host.id,
+            hostName: host.name,
+          }))
+          : null,
         machineInfo: machineInfoResult.status === "fulfilled" ? machineInfoResult.value : null,
         machineStatus: machineStatusResult.status === "fulfilled" ? machineStatusResult.value : null,
       });
     } catch (error) {
-      appLog.error("app", `Failed to load data for host ${hostId}: ${error instanceof Error ? error.message : String(error)}`);
+      appLog.error("app", `Failed to load data for host ${host.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, [updateConnection]);
+
+  const refreshAllSessions = useCallback(async () => {
+    await Promise.all([
+      refreshDaemonSessions(),
+      ...hosts
+        .filter((host) => connections.get(host.id)?.state === "connected")
+        .map((host) => loadHostData(host)),
+    ]);
+  }, [connections, hosts, loadHostData, refreshDaemonSessions]);
 
   // --- Effects ---
 
@@ -236,7 +251,7 @@ function App() {
     for (const host of hosts) {
       const conn = connections.get(host.id);
       if (conn && conn.state === "connected" && conn.sessions === null) {
-        void loadHostData(host.id, host.url);
+        void loadHostData(host);
       }
     }
   }, [hosts, connections, loadHostData]);
@@ -273,19 +288,13 @@ function App() {
     if (mainView !== "agents") return undefined;
 
     const refreshSessions = () => {
-      void refreshDaemonSessions();
-      hosts.forEach((host) => {
-        const conn = connections.get(host.id);
-        if (conn?.state === "connected") {
-          void loadHostData(host.id, host.url);
-        }
-      });
+      void refreshAllSessions();
     };
 
     refreshSessions();
     const interval = setInterval(refreshSessions, 5000);
     return () => clearInterval(interval);
-  }, [mainView, refreshDaemonSessions, hosts, connections, loadHostData]);
+  }, [mainView, refreshAllSessions]);
 
   // --- Action handlers ---
 
@@ -524,6 +533,7 @@ function App() {
     () => allFlatSessions.find((session) => session.id === activeTerminalSessionId) ?? null,
     [allFlatSessions, activeTerminalSessionId],
   );
+  const activeSessionBaseUrl = activeHostUrl ?? LOCAL_DAEMON;
 
   return (
     <main className="shell">
@@ -541,6 +551,9 @@ function App() {
       <section className="main-panel">
         <AgentsView
           daemonUrl={LOCAL_DAEMON}
+          connections={hostConnections}
+          activeSessionBaseUrl={activeSessionBaseUrl}
+          localHostName={localMachineInfo?.hostname ?? null}
           sessions={allFlatSessions}
           localSessions={localSessions}
           activeSessionId={activeTerminalSessionId}
@@ -549,15 +562,7 @@ function App() {
           onCreateLocalSession={handleCreateLocalSession}
           onTerminateLocalSession={handleTerminateLocalSession}
           onLocalSessionStatusChange={handleLocalSessionStatusChange}
-          onRefreshSessions={() => {
-            void refreshDaemonSessions();
-            hosts.forEach((h) => {
-              const conn = connections.get(h.id);
-              if (conn && conn.state === "connected") {
-                loadHostData(h.id, h.url);
-              }
-            });
-          }}
+          onRefreshSessions={refreshAllSessions}
         />
 
 
@@ -650,7 +655,7 @@ function App() {
         </div>
       </section>
 
-      <RightPanel daemonUrl={LOCAL_DAEMON} activeSession={activeSession} />
+      <RightPanel daemonUrl={activeSessionBaseUrl} activeSession={activeSession} />
     </main>
   );
 }

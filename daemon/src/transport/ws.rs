@@ -9,6 +9,7 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
+use crate::chat::broadcaster::{ChatBroadcaster, ChatEvent};
 use crate::middleware::permissions::PeerTier;
 use crate::store::chunks::TerminalChunkRecord;
 use crate::terminal::broadcaster::SessionBroadcaster;
@@ -86,6 +87,8 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
     let mut broadcast_rx: Option<broadcast::Receiver<TerminalChunkRecord>> = None;
     let mut current_session_id: Option<String> = None;
     let mut current_broadcaster: Option<Arc<SessionBroadcaster>> = None;
+    let mut chat_rx: Option<broadcast::Receiver<ChatEvent>> = None;
+    let mut _chat_broadcaster: Option<Arc<ChatBroadcaster>> = None;
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
 
     loop {
@@ -118,7 +121,43 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
                 }
             }
 
-            // Priority 2: heartbeat
+            // Priority 2: forward chat events
+            result = async {
+                match chat_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match result {
+                    Ok(event) => {
+                        let msg = match &event {
+                            ChatEvent::Delta { session_id, message_id, delta } => {
+                                serde_json::json!({"op": "chat_delta", "sessionId": session_id, "messageId": message_id, "delta": delta})
+                            }
+                            ChatEvent::Message { message } => {
+                                serde_json::json!({"op": "chat_message", "message": message})
+                            }
+                            ChatEvent::Status { session_id, status } => {
+                                serde_json::json!({"op": "chat_status", "sessionId": session_id, "status": status})
+                            }
+                            ChatEvent::Meta { session_id, tokens, context_pct } => {
+                                serde_json::json!({"op": "session_meta", "sessionId": session_id, "tokens": tokens, "contextPct": context_pct})
+                            }
+                        };
+                        if send_json(&mut socket, &msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(lagged = n, "chat broadcast receiver lagged, some events lost");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        chat_rx = None;
+                    }
+                }
+            }
+
+            // Priority 3: heartbeat
             _ = heartbeat.tick() => {
                 let msg = serde_json::json!({
                     "op": "heartbeat",
@@ -129,7 +168,7 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
                 }
             }
 
-            // Priority 3: client messages
+            // Priority 4: client messages
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
@@ -143,6 +182,8 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
                                     &mut broadcast_rx,
                                     &mut current_session_id,
                                     &mut current_broadcaster,
+                                    &mut chat_rx,
+                                    &mut _chat_broadcaster,
                                     tier,
                                 ).await.is_err() {
                                     break;
@@ -170,6 +211,9 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
 
     // Cleanup
     cleanup(&state, current_session_id.as_deref(), current_broadcaster.as_ref());
+    if let Some(ref bc) = _chat_broadcaster {
+        bc.unsubscribe();
+    }
     debug!("websocket disconnected");
 }
 
@@ -184,6 +228,8 @@ async fn handle_op(
     broadcast_rx: &mut Option<broadcast::Receiver<TerminalChunkRecord>>,
     current_session_id: &mut Option<String>,
     current_broadcaster: &mut Option<Arc<SessionBroadcaster>>,
+    chat_rx: &mut Option<broadcast::Receiver<ChatEvent>>,
+    chat_broadcaster: &mut Option<Arc<ChatBroadcaster>>,
     tier: PeerTier,
 ) -> Result<(), ()> {
     match msg.op.as_str() {
@@ -339,7 +385,15 @@ async fn handle_op(
             let Some(session_id) = msg.session_id else {
                 return send_error(socket, "subscribe_chat requires sessionId").await;
             };
-            match state.store.list_chat_messages(&session_id, None, 1000) {
+
+            // Unsubscribe from previous chat broadcaster
+            if let Some(bc) = chat_broadcaster.take() {
+                bc.unsubscribe();
+            }
+            *chat_rx = None;
+
+            // Replay existing messages from DB
+            match state.store.list_chat_messages(&session_id, None, 200) {
                 Ok(messages) => {
                     for m in &messages {
                         let reply = serde_json::json!({ "op": "chat_message", "message": m });
@@ -348,6 +402,13 @@ async fn handle_op(
                 }
                 Err(e) => return send_error(socket, &format!("db error: {e}")).await,
             }
+
+            // Subscribe to the ChatBroadcaster for live events
+            if let Some(bc) = state.chat_manager.get_broadcaster(&session_id).await {
+                *chat_rx = Some(bc.subscribe());
+                *chat_broadcaster = Some(bc);
+            }
+
             let reply = serde_json::json!({ "op": "subscribed_chat", "sessionId": session_id });
             send_json(socket, &reply).await
         }
@@ -364,8 +425,16 @@ async fn handle_op(
             };
             let msg_id = uuid::Uuid::new_v4().to_string();
             state.store.create_chat_message(&msg_id, &session_id, "user", &content).ok();
-            if let Err(e) = state.manager.send_input(&session_id, content.as_bytes(), true).await {
-                return send_error(socket, &format!("input error: {e}")).await;
+
+            // Try chat process first, fall back to terminal manager
+            if state.chat_manager.has_session(&session_id).await {
+                if let Err(e) = state.chat_manager.send_input(&session_id, &content).await {
+                    return send_error(socket, &format!("input error: {e}")).await;
+                }
+            } else {
+                if let Err(e) = state.manager.send_input(&session_id, content.as_bytes(), true).await {
+                    return send_error(socket, &format!("input error: {e}")).await;
+                }
             }
             Ok(())
         }

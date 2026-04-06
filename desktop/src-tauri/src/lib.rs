@@ -4,6 +4,7 @@ mod detect;
 use pty::PtyManager;
 use std::sync::Mutex;
 use tauri::{Manager, State};
+use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
@@ -36,6 +37,41 @@ fn pty_resize(
 #[tauri::command]
 fn pty_kill(state: State<'_, PtyManager>, session_id: String) -> Result<(), String> {
     state.kill(&session_id)
+}
+
+fn resolve_daemon_bind_hosts(
+    configured_bind_hosts: Option<&str>,
+    detected_tailscale_ip: Option<&str>,
+) -> Option<String> {
+    if configured_bind_hosts
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    detected_tailscale_ip
+        .and_then(|value| value.lines().map(str::trim).find(|value| !value.is_empty()))
+        .map(|ip| format!("{ip},127.0.0.1"))
+}
+
+fn default_daemon_bind_hosts() -> Option<String> {
+    let configured_bind_hosts = std::env::var("GHOST_PROTOCOL_BIND_HOST").ok();
+    let detected_tailscale_ip = detect::detect_tailscale_ip().ok();
+
+    resolve_daemon_bind_hosts(
+        configured_bind_hosts.as_deref(),
+        detected_tailscale_ip.as_deref(),
+    )
+}
+
+fn apply_daemon_bind_args(command: Command, bind_hosts: Option<&str>) -> Command {
+    if let Some(bind_hosts) = bind_hosts {
+        command.args(["--bind-host", bind_hosts])
+    } else {
+        command
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -74,9 +110,14 @@ pub fn run() {
                 return Ok(());
             }
 
+            let bind_hosts = default_daemon_bind_hosts();
+            if let Some(bind_hosts) = bind_hosts.as_deref() {
+                eprintln!("[daemon] binding daemon to {bind_hosts}");
+            }
+
             // Try bundled sidecar first, then fall back to system-installed daemon
             let spawned = match app.shell().sidecar("binaries/ghost-protocol-daemon") {
-                Ok(sidecar) => match sidecar.spawn() {
+                Ok(sidecar) => match apply_daemon_bind_args(sidecar, bind_hosts.as_deref()).spawn() {
                     Ok(result) => {
                         eprintln!("[daemon] started bundled sidecar");
                         Some(result)
@@ -94,7 +135,7 @@ pub fn run() {
 
             // Fall back to system-installed ghost-protocol-daemon
             let spawned = spawned.or_else(|| {
-                match app.shell().command("ghost-protocol-daemon").spawn() {
+                match apply_daemon_bind_args(app.shell().command("ghost-protocol-daemon"), bind_hosts.as_deref()).spawn() {
                     Ok(result) => {
                         eprintln!("[daemon] started system-installed daemon from PATH");
                         Some(result)
@@ -149,4 +190,33 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_daemon_bind_hosts;
+
+    #[test]
+    fn respects_explicit_bind_host_override() {
+        let bind_hosts = resolve_daemon_bind_hosts(Some("127.0.0.1"), Some("100.64.0.10"));
+        assert_eq!(bind_hosts, None);
+    }
+
+    #[test]
+    fn uses_tailscale_ip_when_no_override_is_configured() {
+        let bind_hosts = resolve_daemon_bind_hosts(None, Some("100.64.0.10"));
+        assert_eq!(bind_hosts.as_deref(), Some("100.64.0.10,127.0.0.1"));
+    }
+
+    #[test]
+    fn ignores_blank_values_when_deriving_bind_hosts() {
+        let bind_hosts = resolve_daemon_bind_hosts(Some("   "), Some("  \n100.64.0.10\n"));
+        assert_eq!(bind_hosts.as_deref(), Some("100.64.0.10,127.0.0.1"));
+    }
+
+    #[test]
+    fn returns_none_without_override_or_tailscale_ip() {
+        let bind_hosts = resolve_daemon_bind_hosts(None, None);
+        assert_eq!(bind_hosts, None);
+    }
 }

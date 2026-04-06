@@ -42,6 +42,8 @@ impl Store {
         conn.execute_batch(
             "ALTER TABLE terminal_sessions ADD COLUMN project_id TEXT REFERENCES projects(id);"
         ).ok();
+        conn.execute_batch(include_str!("../../migrations/007_session_delegation.sql"))
+            .ok(); // idempotent — ALTER TABLE may fail if columns already exist
 
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),

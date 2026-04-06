@@ -21,6 +21,9 @@ pub struct TerminalSessionRecord {
     pub exit_code: Option<i32>,
     pub session_type: String,
     pub project_id: Option<String>,
+    pub parent_session_id: Option<String>,
+    pub host_id: Option<String>,
+    pub host_name: Option<String>,
 }
 
 impl Store {
@@ -57,6 +60,9 @@ impl Store {
             exit_code: None,
             session_type: session_type.to_string(),
             project_id: project_id.map(|s| s.to_string()),
+            parent_session_id: None,
+            host_id: None,
+            host_name: None,
         })
     }
 
@@ -118,7 +124,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, name, workdir, command_json, created_at,
                     started_at, finished_at, last_chunk_at, pid, exit_code,
-                    session_type, project_id
+                    session_type, project_id, parent_session_id, host_id, host_name
              FROM terminal_sessions WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![session_id], |row| {
@@ -140,6 +146,9 @@ impl Store {
                 exit_code: row.get(11)?,
                 session_type: row.get(12)?,
                 project_id: row.get(13)?,
+                parent_session_id: row.get(14)?,
+                host_id: row.get(15)?,
+                host_name: row.get(16)?,
             })
         })?;
         match rows.next() {
@@ -155,7 +164,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, name, workdir, command_json, created_at,
                     started_at, finished_at, last_chunk_at, pid, exit_code,
-                    session_type, project_id
+                    session_type, project_id, parent_session_id, host_id, host_name
              FROM terminal_sessions ORDER BY created_at DESC, id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -177,6 +186,9 @@ impl Store {
                 exit_code: row.get(11)?,
                 session_type: row.get(12)?,
                 project_id: row.get(13)?,
+                parent_session_id: row.get(14)?,
+                host_id: row.get(15)?,
+                host_name: row.get(16)?,
             })
         })?;
         rows.collect()

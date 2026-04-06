@@ -1,4 +1,4 @@
-import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier, DiscoveredPeer, AgentInfo, ProjectRecord, ChatMessage } from "./types";
+import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier, DiscoveredPeer, AgentInfo, ProjectRecord, ChatMessage, TerminalSession } from "./types";
 
 export function wsUrlFromHttp(baseUrl: string) {
   if (baseUrl.startsWith("https://")) return baseUrl.replace("https://", "wss://") + "/ws";
@@ -159,5 +159,17 @@ export async function sendChatMessage(
   return api(daemonUrl, `/api/chat/sessions/${sessionId}/message`, {
     method: "POST",
     body: JSON.stringify({ content }),
+  });
+}
+
+export async function switchSessionMode(
+  daemonUrl: string,
+  sessionId: string,
+  mode: "chat" | "terminal",
+  confirmed = false,
+): Promise<{ session?: TerminalSession; warning?: string; needsConfirmation?: boolean }> {
+  return api(daemonUrl, `/api/sessions/${sessionId}/switch-mode`, {
+    method: "POST",
+    body: JSON.stringify({ mode, confirmed }),
   });
 }

@@ -97,7 +97,7 @@ export type RunDetail = {
 
 export type TerminalSession = {
   id: string;
-  mode: "agent" | "project" | "rescue_shell";
+  mode: "agent" | "project" | "rescue_shell" | "chat" | "terminal";
   status: "created" | "running" | "exited" | "terminated" | "error";
   name?: string | null;
   workdir: string;
@@ -108,6 +108,9 @@ export type TerminalSession = {
   lastChunkAt?: string | null;
   pid?: number | null;
   exitCode?: number | null;
+  parentSessionId?: string | null;
+  hostId?: string | null;
+  hostName?: string | null;
 };
 
 export type TerminalChunk = {
@@ -142,7 +145,7 @@ export type ConversationDetail = {
   runs: RunRecord[];
 };
 
-export type MainView = "chat" | "terminal" | "logs" | "settings";
+export type MainView = "agents" | "chat" | "terminal" | "logs" | "settings";
 
 // --- Local terminal types (Tauri PTY) ---
 
@@ -224,6 +227,7 @@ export type AgentInfo = {
   agentType: "cli" | "api";
   command: string;
   version: string | null;
+  persistent: boolean;
 };
 
 export type ProjectRecord = {
@@ -242,3 +246,36 @@ export type ChatMessage = {
   content: string;
   createdAt: string;
 };
+
+export type ChatDeltaEvent = {
+  op: "chat_delta";
+  sessionId: string;
+  messageId: string;
+  delta: string;
+};
+
+export type ChatMessageEvent = {
+  op: "chat_message";
+  message: ChatMessage;
+};
+
+export type ChatStatusEvent = {
+  op: "chat_status";
+  sessionId: string;
+  status: "thinking" | "tool_use" | "idle" | "error";
+};
+
+export type SessionMetaEvent = {
+  op: "session_meta";
+  sessionId: string;
+  tokens?: number | null;
+  contextPct?: number | null;
+};
+
+export type ChatWsEvent =
+  | ChatDeltaEvent
+  | ChatMessageEvent
+  | ChatStatusEvent
+  | SessionMetaEvent;
+
+export type SessionMode = "chat" | "terminal";

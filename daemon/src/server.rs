@@ -24,6 +24,9 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
     // 2. Create terminal manager
     let manager = TerminalManager::new(store.clone());
 
+    // 3. Create chat process manager
+    let chat_manager = crate::chat::manager::ChatProcessManager::new(store.clone());
+
     // 4. Recover sessions
     manager.recover().await;
 
@@ -109,6 +112,7 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
     let state = AppState {
         store,
         manager,
+        chat_manager,
         log_buffer,
         bind_address: settings.bind_hosts.join(","),
         allowed_cidrs: settings
@@ -162,6 +166,7 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         .route("/api/chat/sessions", post(http::create_chat_session))
         .route("/api/chat/sessions/{id}/messages", get(http::list_chat_messages))
         .route("/api/chat/sessions/{id}/message", post(http::send_chat_message))
+        .route("/api/sessions/{id}/switch-mode", post(http::switch_session_mode))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
         .layer(middleware::from_fn_with_state(store_for_guard, tailscale_guard))

@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::chat::manager::ChatProcessManager;
 use crate::host::logs::LogBuffer;
 use crate::middleware::permissions::{
     ClientIp, OptionalNeedsApproval, RequireFullAccess, RequireLocalhostOnly, RequireReadOnly,
@@ -15,6 +16,7 @@ use crate::terminal::manager::TerminalManager;
 pub struct AppState {
     pub store: Store,
     pub manager: TerminalManager,
+    pub chat_manager: ChatProcessManager,
     pub log_buffer: LogBuffer,
     pub bind_address: String,
     pub allowed_cidrs: Vec<String>,
@@ -1190,10 +1192,22 @@ pub async fn create_chat_session(
         std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
     });
 
-    // Create session with mode "chat"
-    let session = state.manager
-        .create_session("chat", Some(&agent.name), &workdir, Some(&agent.command))
-        .await
+    // Create session record in DB (no tmux — subprocess-based)
+    let id = uuid::Uuid::new_v4().to_string();
+    let cmd = vec![agent.command.clone()];
+    let mut session = state.store.create_terminal_session(
+        &id, "chat", Some(&agent.name), &workdir, &cmd, "chat", body.project_id.as_deref(),
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))?;
+
+    // Update status to running
+    let now = chrono::Utc::now().to_rfc3339();
+    state.store.update_terminal_session(&id, Some("running"), Some(&now), None, None, None, None)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))?;
+    session.status = "running".to_string();
+    session.started_at = Some(now);
+
+    // Spawn chat subprocess
+    state.chat_manager.spawn_session(&id, &agent, &workdir).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
 
     // System message
@@ -1253,10 +1267,87 @@ pub async fn send_chat_message(
         &uuid::Uuid::new_v4().to_string(), &id, "user", &body.content,
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))?;
 
-    state.manager.send_input(&id, body.content.as_bytes(), true).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+    // Try chat process first, fall back to terminal manager
+    if state.chat_manager.has_session(&id).await {
+        state.chat_manager.send_input(&id, &body.content).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+    } else {
+        state.manager.send_input(&id, body.content.as_bytes(), true).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+    }
 
     Ok(Json(msg))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/sessions/{id}/switch-mode
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct SwitchModeBody {
+    pub mode: String,
+    #[serde(default)]
+    pub confirmed: bool,
+}
+
+pub async fn switch_session_mode(
+    _tier: RequireFullAccess,
+    client_ip: ClientIp,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SwitchModeBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let session = state.store.get_terminal_session(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "session not found" }))))?;
+
+    if session.mode == body.mode {
+        return Ok(Json(serde_json::json!({ "session": session })));
+    }
+
+    let agents = crate::hardware::agents::detect_agents();
+    let agent = agents.iter().find(|a| Some(a.name.as_str()) == session.name.as_deref());
+    let persistent = agent.map(|a| a.persistent).unwrap_or(false);
+
+    if !persistent && !body.confirmed {
+        return Ok(Json(serde_json::json!({
+            "warning": "Switching modes will end the current conversation",
+            "needsConfirmation": true
+        })));
+    }
+
+    // Kill current process
+    if session.mode == "chat" {
+        state.chat_manager.kill_session(&id).await.ok();
+    } else {
+        state.manager.terminate_session(&id).await.ok();
+    }
+
+    // Update mode in DB
+    {
+        let conn = state.store.conn();
+        conn.execute(
+            "UPDATE terminal_sessions SET mode = ?1, status = 'running' WHERE id = ?2",
+            rusqlite::params![body.mode, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))?;
+    }
+
+    // Spawn in new mode
+    if let Some(agent) = agent {
+        if body.mode == "chat" {
+            state.chat_manager.spawn_session(&id, agent, &session.workdir).await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+        } else {
+            crate::terminal::tmux::new_session(&id, &session.workdir, &agent.command)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+        }
+    }
+
+    let updated = state.store.get_terminal_session(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("db error: {e}") }))))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "session not found" }))))?;
+
+    Ok(Json(serde_json::json!({ "session": updated })))
 }
 
 // ---------------------------------------------------------------------------

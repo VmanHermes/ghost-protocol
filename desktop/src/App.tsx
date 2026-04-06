@@ -36,6 +36,8 @@ import packageJson from "../package.json";
 
 const LOCAL_DAEMON = "http://127.0.0.1:8787";
 const APP_VERSION = packageJson.version;
+const HOST_POLL_MS = 10_000;
+const DISCOVERY_POLL_MS = 10_000;
 
 const LOCAL_TERMINAL_CAPABILITIES = ["supports_resume", "supports_terminal_view"];
 
@@ -264,7 +266,7 @@ function App() {
       for (const host of hostsRef.current) {
         void checkHostHealth(host);
       }
-    }, 30000);
+    }, HOST_POLL_MS);
     return () => clearInterval(interval);
   }, [checkHostHealth]);
 
@@ -280,7 +282,7 @@ function App() {
 
   useEffect(() => {
     refreshDiscoveries();
-    const interval = setInterval(refreshDiscoveries, 30000);
+    const interval = setInterval(refreshDiscoveries, DISCOVERY_POLL_MS);
     return () => clearInterval(interval);
   }, [refreshDiscoveries]);
 

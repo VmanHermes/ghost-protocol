@@ -1099,9 +1099,22 @@ pub async fn remove_host(
         }
     }
 
+    let known_host = state.store.get_known_host(&id).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("db error: {e}") })),
+        )
+    })?;
+
     state
         .store
         .remove_known_host(&id)
+        .and_then(|_| {
+            if let Some(host) = &known_host {
+                state.store.delete_discovery(&host.tailscale_ip)?;
+            }
+            Ok(())
+        })
         .map(|_| {
             info!(host_id = %id, "host removed");
             StatusCode::NO_CONTENT
@@ -1652,11 +1665,11 @@ pub async fn create_project(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/projects (localhost-only)
+// GET /api/projects
 // ---------------------------------------------------------------------------
 
 pub async fn list_projects(
-    _guard: RequireLocalhostOnly,
+    _tier: RequireReadOnly,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::store::projects::ProjectRecord>>, (StatusCode, Json<serde_json::Value>)> {
     state.store.list_projects().map(Json).map_err(|e| {
@@ -1716,11 +1729,11 @@ pub async fn remove_project(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/agents (localhost-only)
+// GET /api/agents
 // ---------------------------------------------------------------------------
 
 pub async fn list_agents(
-    _guard: RequireLocalhostOnly,
+    _tier: RequireReadOnly,
 ) -> Json<Vec<crate::hardware::agents::AgentInfo>> {
     Json(crate::hardware::agents::detect_agents())
 }

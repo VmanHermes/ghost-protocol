@@ -26,6 +26,13 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function formatSessionOrigin(session: TerminalSession): string {
+  if (session.hostId) {
+    return `remote · ${session.hostName ?? "mesh"}`;
+  }
+  return "local";
+}
+
 export function SessionSidebar({ activeSessions, previousSessions, activeSessionId, onSelectSession }: Props) {
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const dragging = useRef(false);
@@ -55,7 +62,7 @@ export function SessionSidebar({ activeSessions, previousSessions, activeSession
                 <div className="session-card-header">
                   <span className="status-dot" style={{ background: STATUS_DOT_COLORS[session.status] }} />
                   <span className="session-card-name">{session.name ?? "Shell"}</span>
-                  <span className="session-card-type">{session.hostName ?? "local"}</span>
+                  <span className="session-card-type">{formatSessionOrigin(session)}</span>
                 </div>
                 <div className="session-card-workdir">{session.workdir}</div>
               </div>
@@ -71,9 +78,12 @@ export function SessionSidebar({ activeSessions, previousSessions, activeSession
                 <div className="session-card-header">
                   <span className="status-dot" style={{ background: "var(--text-muted)" }} />
                   <span className="session-card-name">{session.name ?? "Shell"}</span>
-                  <span className="session-card-type">{session.finishedAt ? formatRelativeTime(session.finishedAt) : ""}</span>
+                  <span className="session-card-type">{formatSessionOrigin(session)}</span>
                 </div>
-                <div className="session-card-workdir">{session.workdir}</div>
+                <div className="session-card-workdir">
+                  {session.finishedAt ? `${formatRelativeTime(session.finishedAt)} · ` : ""}
+                  {session.workdir}
+                </div>
               </div>
             ))}
           </div>

@@ -29,6 +29,13 @@ function formatTokens(tokens: number | null): string {
   return `${tokens} tokens`;
 }
 
+function formatSessionOrigin(session: TerminalSession): string {
+  if (session.hostId) {
+    return `remote · ${session.hostName ?? "mesh"}`;
+  }
+  return "local";
+}
+
 export function SessionHeader({
   session,
   mode,
@@ -62,7 +69,7 @@ export function SessionHeader({
         <span className="status-dot" style={{ background: statusColor }} />
         <span className="session-header-name">{session.name ?? "Shell"}</span>
         <span className="muted" style={{ fontSize: "0.82rem" }}>{session.workdir}</span>
-        {session.hostName && <span className="muted" style={{ fontSize: "0.78rem" }}>· {session.hostName}</span>}
+        <span className="muted" style={{ fontSize: "0.78rem" }}>· {formatSessionOrigin(session)}</span>
         {session.parentSessionId && <span className="session-delegated-badge">Delegated</span>}
       </div>
       <div className="session-header-meta">

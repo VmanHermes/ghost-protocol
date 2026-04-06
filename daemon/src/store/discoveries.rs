@@ -97,6 +97,16 @@ impl Store {
         Ok(())
     }
 
+    /// Remove a discovery record entirely so the peer can be rediscovered from scratch.
+    pub fn delete_discovery(&self, ip: &str) -> Result<(), rusqlite::Error> {
+        let conn = self.conn();
+        conn.execute(
+            "DELETE FROM discovered_peers WHERE tailscale_ip = ?1",
+            params![ip],
+        )?;
+        Ok(())
+    }
+
     /// Returns true if the IP is already in known_hosts OR in discovered_peers
     /// with status 'dismissed' or 'added'.
     pub fn is_known_or_dismissed(&self, ip: &str) -> Result<bool, rusqlite::Error> {
@@ -175,6 +185,19 @@ mod tests {
 
         let pending = store.list_pending_discoveries().unwrap();
         assert_eq!(pending.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_discovery_allows_rediscovery() {
+        let store = test_store();
+        store.upsert_discovered_peer("100.64.1.40", "node-e").unwrap();
+        store.accept_discovery("100.64.1.40").unwrap();
+        assert!(store.is_known_or_dismissed("100.64.1.40").unwrap());
+
+        store.delete_discovery("100.64.1.40").unwrap();
+
+        assert!(store.get_discovery("100.64.1.40").unwrap().is_none());
+        assert!(!store.is_known_or_dismissed("100.64.1.40").unwrap());
     }
 
     #[test]

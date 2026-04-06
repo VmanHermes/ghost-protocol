@@ -2,6 +2,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -27,6 +28,27 @@ pub struct PtySession {
 
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, PtySession>>>,
+}
+
+fn default_home_dir() -> String {
+    std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
+}
+
+fn expand_workdir(input: &str) -> String {
+    let trimmed = input.trim();
+
+    if trimmed.is_empty() || trimmed == "~" {
+        return default_home_dir();
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        return PathBuf::from(default_home_dir())
+            .join(rest)
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    trimmed.to_string()
 }
 
 impl PtyManager {
@@ -64,7 +86,7 @@ impl PtyManager {
         cmd.env("GHOST_PROTOCOL_LOCAL", "1");
 
         if let Some(ref dir) = workdir {
-            cmd.cwd(dir);
+            cmd.cwd(expand_workdir(dir));
         }
 
         let child = pair

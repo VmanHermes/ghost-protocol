@@ -99,6 +99,15 @@ impl Store {
         Ok(rows)
     }
 
+    pub fn count_user_messages(&self, session_id: &str) -> Result<i64, rusqlite::Error> {
+        let conn = self.conn();
+        conn.query_row(
+            "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1 AND role = 'user'",
+            params![session_id],
+            |row| row.get(0),
+        )
+    }
+
     pub fn get_chat_message(&self, id: &str) -> Result<Option<ChatMessage>, rusqlite::Error> {
         let conn = self.conn();
         let mut stmt = conn.prepare(

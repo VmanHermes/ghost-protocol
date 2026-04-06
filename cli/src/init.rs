@@ -34,7 +34,17 @@ pub async fn run(daemon_url: &str) -> Result<(), String> {
         "agents": selected.iter().map(|a| serde_json::json!({ "id": a.id, "enabled": true, "preferredMachine": null })).collect::<Vec<_>>(),
         "machines": {},
         "commands": { "build": null, "test": null, "lint": null, "deploy": null },
-        "environment": {}
+        "environment": {},
+        "experimentalMultiAgent": false,
+        "allowedDriverKinds": ["terminal_driver", "structured_chat_driver", "api_driver"],
+        "defaultSkillSet": [],
+        "delegationLimits": {
+            "maxDepth": 2,
+            "maxChildren": 4,
+            "budgetTokens": null,
+            "budgetSecs": 900
+        },
+        "communicationPolicy": "supervisor_mailbox"
     });
 
     let ghost_dir = workdir.join(".ghost");

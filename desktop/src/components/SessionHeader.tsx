@@ -7,6 +7,8 @@ type Props = {
   mode: SessionMode;
   meta: ChatSessionMeta | null;
   onSwitchMode: (mode: SessionMode) => void;
+  onOpenCompanionTerminal: () => void;
+  onReopenSession: () => void;
   onEndSession: () => void;
 };
 
@@ -27,7 +29,15 @@ function formatTokens(tokens: number | null): string {
   return `${tokens} tokens`;
 }
 
-export function SessionHeader({ session, mode, meta, onSwitchMode, onEndSession }: Props) {
+export function SessionHeader({
+  session,
+  mode,
+  meta,
+  onSwitchMode,
+  onOpenCompanionTerminal,
+  onReopenSession,
+  onEndSession,
+}: Props) {
   const [duration, setDuration] = useState(formatDuration(session.startedAt));
   useEffect(() => {
     if (session.status !== "running") return;
@@ -38,6 +48,13 @@ export function SessionHeader({ session, mode, meta, onSwitchMode, onEndSession 
   const statusColor = session.status === "running" ? "var(--accent-green)" : session.status === "error" ? "var(--accent-red)" : "var(--text-muted)";
   const contextPct = meta?.contextPct;
   const contextWarning = contextPct != null && contextPct > 80;
+  const capabilities = session.capabilities ?? [];
+  const isLive = session.status === "running" || session.status === "created";
+  const isStructuredChat = session.driverKind === "structured_chat_driver" || session.driverKind === "api_driver";
+  const canChat = isStructuredChat || capabilities.includes("supports_chat_view");
+  const canTerminal = !isStructuredChat && capabilities.includes("supports_terminal_view");
+  const canSafeSwitch = !isStructuredChat && capabilities.includes("supports_safe_mode_switch") && canChat && canTerminal;
+  const canOpenCompanionTerminal = isLive && isStructuredChat && !!session.agentId;
 
   return (
     <div className="session-header">
@@ -61,12 +78,26 @@ export function SessionHeader({ session, mode, meta, onSwitchMode, onEndSession 
         )}
       </div>
       <div className="session-header-actions">
-        <div className="session-mode-toggle">
-          <button className={`session-mode-btn ${mode === "chat" ? "session-mode-active" : ""}`} onClick={() => onSwitchMode("chat")}>Chat</button>
-          <button className={`session-mode-btn ${mode === "terminal" ? "session-mode-active" : ""}`} onClick={() => onSwitchMode("terminal")}>Terminal</button>
-        </div>
+        {canSafeSwitch ? (
+          <div className="session-mode-toggle">
+            <button className={`session-mode-btn ${mode === "chat" ? "session-mode-active" : ""}`} onClick={() => onSwitchMode("chat")}>Chat</button>
+            <button className={`session-mode-btn ${mode === "terminal" ? "session-mode-active" : ""}`} onClick={() => onSwitchMode("terminal")}>Terminal</button>
+          </div>
+        ) : (
+          <div className="session-mode-toggle">
+            {canChat && <button className={`session-mode-btn ${mode === "chat" ? "session-mode-active" : ""}`} disabled>Chat</button>}
+            {canTerminal && <button className={`session-mode-btn ${mode === "terminal" ? "session-mode-active" : ""}`} disabled>Terminal</button>}
+            {canOpenCompanionTerminal && (
+              <button className="session-mode-btn" onClick={onOpenCompanionTerminal}>Open Companion Terminal</button>
+            )}
+          </div>
+        )}
         <button className="btn-secondary" disabled title="code-server coming soon" style={{ opacity: 0.4, fontSize: "0.78rem", padding: "4px 10px" }}>Open IDE</button>
-        <button className="btn-secondary" onClick={onEndSession} style={{ fontSize: "0.78rem", padding: "4px 10px" }}>End Session</button>
+        {isLive ? (
+          <button className="btn-secondary" onClick={onEndSession} style={{ fontSize: "0.78rem", padding: "4px 10px" }}>End Session</button>
+        ) : (
+          <button className="btn-secondary" onClick={onReopenSession} style={{ fontSize: "0.78rem", padding: "4px 10px" }}>Reopen Session</button>
+        )}
       </div>
     </div>
   );

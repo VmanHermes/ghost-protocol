@@ -1,16 +1,20 @@
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
-const BASE: &str = "http://127.0.0.1:18787";
+static NEXT_PORT: AtomicU16 = AtomicU16::new(18787);
 
 async fn with_daemon<F, Fut>(test: F)
 where
-    F: FnOnce() -> Fut,
+    F: FnOnce(String) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
+    let port = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+    let base = format!("http://127.0.0.1:{port}");
     let temp_db = std::env::temp_dir().join(format!(
-        "ghost_protocol_test_{}.db",
-        std::process::id()
+        "ghost_protocol_test_{}_{}.db",
+        std::process::id(),
+        port
     ));
 
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ghost-protocol-daemon"))
@@ -18,7 +22,7 @@ where
             "--bind-host",
             "127.0.0.1",
             "--bind-port",
-            "18787",
+            &port.to_string(),
             "--db-path",
             temp_db.to_str().unwrap(),
         ])
@@ -34,7 +38,7 @@ where
     let mut ready = false;
     for _ in 0..30 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if let Ok(resp) = client.get(format!("{BASE}/health")).send().await {
+        if let Ok(resp) = client.get(format!("{base}/health")).send().await {
             if resp.status().is_success() {
                 ready = true;
                 break;
@@ -44,7 +48,7 @@ where
     assert!(ready, "daemon did not become ready within 3 seconds");
 
     // Run the test
-    test().await;
+    test(base).await;
 
     // Cleanup
     child.kill().await.ok();
@@ -56,12 +60,12 @@ where
 
 #[tokio::test]
 async fn test_create_list_terminate_session() {
-    with_daemon(|| async {
+    with_daemon(|base| async move {
         let client = reqwest::Client::new();
 
         // Create session
         let resp = client
-            .post(format!("{BASE}/api/terminal/sessions"))
+            .post(format!("{base}/api/terminal/sessions"))
             .json(&json!({"mode": "rescue_shell", "name": "test-session"}))
             .send()
             .await
@@ -82,7 +86,7 @@ async fn test_create_list_terminate_session() {
 
         // List sessions
         let resp = client
-            .get(format!("{BASE}/api/terminal/sessions"))
+            .get(format!("{base}/api/terminal/sessions"))
             .send()
             .await
             .unwrap();
@@ -93,7 +97,7 @@ async fn test_create_list_terminate_session() {
         // Terminate
         let resp = client
             .post(format!(
-                "{BASE}/api/terminal/sessions/{session_id}/terminate"
+                "{base}/api/terminal/sessions/{session_id}/terminate"
             ))
             .send()
             .await
@@ -111,11 +115,11 @@ async fn test_create_list_terminate_session() {
 
 #[tokio::test]
 async fn test_health_and_system_status() {
-    with_daemon(|| async {
+    with_daemon(|base| async move {
         let client = reqwest::Client::new();
 
         let resp = client
-            .get(format!("{BASE}/health"))
+            .get(format!("{base}/health"))
             .send()
             .await
             .unwrap();
@@ -123,7 +127,7 @@ async fn test_health_and_system_status() {
         assert_eq!(body["ok"], true);
 
         let resp = client
-            .get(format!("{BASE}/api/system/status"))
+            .get(format!("{base}/api/system/status"))
             .send()
             .await
             .unwrap();
@@ -139,12 +143,12 @@ async fn test_health_and_system_status() {
 
 #[tokio::test]
 async fn test_hardware_endpoints() {
-    with_daemon(|| async {
+    with_daemon(|base| async move {
         let client = reqwest::Client::new();
 
         // GET /api/system/hardware
         let resp = client
-            .get(format!("{BASE}/api/system/hardware"))
+            .get(format!("{base}/api/system/hardware"))
             .send()
             .await
             .unwrap();
@@ -156,7 +160,7 @@ async fn test_hardware_endpoints() {
 
         // GET /api/system/hardware/status
         let resp = client
-            .get(format!("{BASE}/api/system/hardware/status"))
+            .get(format!("{base}/api/system/hardware/status"))
             .send()
             .await
             .unwrap();

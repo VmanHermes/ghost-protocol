@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::store::sessions::TerminalSessionRecord;
 use crate::store::Store;
+use crate::supervisor;
 use crate::terminal::broadcaster::SessionBroadcaster;
 use crate::terminal::session;
 use crate::terminal::tmux;
@@ -25,6 +26,18 @@ pub struct TerminalManager {
 /// (We use a separate type alias for clarity.)
 type ManagedSessionEntry = session::ManagedSession;
 
+#[derive(Debug, Clone, Default)]
+pub struct CreateSessionOptions {
+    pub project_id: Option<String>,
+    pub parent_session_id: Option<String>,
+    pub root_session_id: Option<String>,
+    pub host_id: Option<String>,
+    pub host_name: Option<String>,
+    pub agent_id: Option<String>,
+    pub driver_kind: Option<String>,
+    pub capabilities: Vec<String>,
+}
+
 impl TerminalManager {
     pub fn new(store: Store) -> Self {
         Self {
@@ -41,21 +54,63 @@ impl TerminalManager {
         name: Option<&str>,
         workdir: &str,
         command_override: Option<&str>,
+        options: CreateSessionOptions,
     ) -> Result<TerminalSessionRecord, String> {
+        let workdir = crate::workdir::expand_workdir(workdir);
         let id = Uuid::new_v4().to_string();
         let shell = command_override
             .map(|c| c.to_string())
             .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
         let cmd = tmux::attach_command(&id);
+        let driver_kind = options
+            .driver_kind
+            .clone()
+            .unwrap_or_else(|| supervisor::DRIVER_TERMINAL.to_string());
+        let capabilities = if options.capabilities.is_empty() {
+            supervisor::driver_capabilities(&driver_kind, true, options.agent_id.is_some())
+        } else {
+            options.capabilities.clone()
+        };
+        let root_session_id = options
+            .root_session_id
+            .clone()
+            .or_else(|| options.parent_session_id.clone());
 
         // 1. Create DB record
         let mut record = self
             .store
-            .create_terminal_session(&id, mode, name, workdir, &cmd, "terminal", None)
+            .create_work_session(crate::store::sessions::CreateWorkSessionParams {
+                id: &id,
+                mode,
+                name,
+                workdir: &workdir,
+                command: &cmd,
+                session_type: "terminal",
+                project_id: options.project_id.as_deref(),
+                parent_session_id: options.parent_session_id.as_deref(),
+                root_session_id: root_session_id.as_deref(),
+                host_id: options.host_id.as_deref(),
+                host_name: options.host_name.as_deref(),
+                agent_id: options.agent_id.as_deref(),
+                driver_kind: &driver_kind,
+                capabilities: &capabilities,
+            })
             .map_err(|e| format!("db error creating session: {e}"))?;
 
         // 2. Create tmux session
-        tmux::new_session(&id, workdir, &shell)?;
+        if let Err(error) = tmux::new_session(&id, &workdir, &shell) {
+            let now = Utc::now().to_rfc3339();
+            let _ = self.store.update_terminal_session(
+                &id,
+                Some("error"),
+                None,
+                Some(&now),
+                None,
+                None,
+                None,
+            );
+            return Err(error);
+        }
 
         // 3. Update DB to running
         let now = Utc::now().to_rfc3339();
@@ -77,6 +132,8 @@ impl TerminalManager {
 
         // 6. Store session
         self.sessions.lock().await.insert(id.clone(), managed);
+
+        self.spawn_exit_monitor(id.clone());
 
         // Inject welcome message for terminal sessions
         if mode != "chat" {
@@ -106,6 +163,57 @@ Commands:\n\
 
         info!(session_id = %id, "terminal session created");
         Ok(record)
+    }
+
+    fn spawn_exit_monitor(&self, session_id: String) {
+        let store = self.store.clone();
+        let sessions = Arc::clone(&self.sessions);
+        let broadcasters = Arc::clone(&self.broadcasters);
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                let current = match store.get_terminal_session(&session_id) {
+                    Ok(Some(record)) => record,
+                    Ok(None) => break,
+                    Err(_) => break,
+                };
+
+                if current.status != "created" && current.status != "running" {
+                    break;
+                }
+
+                if tmux::has_session(&session_id) {
+                    continue;
+                }
+
+                let now = Utc::now().to_rfc3339();
+                let _ = store.update_terminal_session(
+                    &session_id,
+                    Some("exited"),
+                    None,
+                    Some(&now),
+                    None,
+                    None,
+                    None,
+                );
+
+                if let Ok(chunk) = store.append_terminal_chunk(&session_id, "system", "\r\n[session exited]\r\n") {
+                    let broadcaster = {
+                        let guard = broadcasters.lock().await;
+                        guard.get(&session_id).cloned()
+                    };
+                    if let Some(bc) = broadcaster {
+                        bc.send(chunk);
+                    }
+                }
+
+                sessions.lock().await.remove(&session_id);
+                broadcasters.lock().await.remove(&session_id);
+                break;
+            }
+        });
     }
 
     /// Ensures a PTY attach process is running for the given session.

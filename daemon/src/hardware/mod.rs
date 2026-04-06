@@ -22,6 +22,7 @@ pub struct ToolsInfo {
 pub struct MachineInfo {
     pub hostname: String,
     pub tailscale_ip: Option<String>,
+    pub daemon_version: String,
     pub os: String,
     pub cpu: cpu::CpuInfo,
     pub ram_gb: f64,
@@ -69,6 +70,7 @@ pub fn collect_machine_info() -> MachineInfo {
     MachineInfo {
         hostname: sys_info.hostname,
         tailscale_ip: sys_info.tailscale_ip,
+        daemon_version: env!("CARGO_PKG_VERSION").to_string(),
         os: read_os_release(),
         cpu: cpu_info,
         ram_gb: ram_info.total_gb,
@@ -130,6 +132,7 @@ mod tests {
     fn test_machine_info_populates_fields() {
         let info = collect_machine_info();
         assert!(!info.hostname.is_empty());
+        assert!(!info.daemon_version.is_empty());
         assert!(!info.os.is_empty());
         assert!(info.cpu.cores > 0);
         assert!(info.ram_gb > 0.0);

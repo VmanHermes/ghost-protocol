@@ -217,10 +217,15 @@ textarea { resize: vertical; }
   padding: 4px 0;
   position: relative;
 }
+.sidebar-host-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
 .sidebar-host-name {
   color: var(--text-primary);
   font-weight: 500;
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -228,6 +233,9 @@ textarea { resize: vertical; }
 .sidebar-host-status {
   color: var(--text-muted);
   font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sidebar-host-remove {
   display: none;
@@ -1011,6 +1019,51 @@ textarea { resize: vertical; }
   font-weight: 500;
   color: var(--text-primary);
 }
+.settings-help {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.settings-actions {
+  display: flex;
+  gap: 8px;
+}
+.settings-status-note {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.settings-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.settings-host-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.settings-host-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.settings-host-meta {
+  margin-top: 2px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+.settings-host-version {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-blue);
+}
 
 /* ─── Empty state ─── */
 .empty-state {
@@ -1762,7 +1815,16 @@ textarea { resize: vertical; }
 .agents-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .agents-topbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
 .agents-topbar select { min-width: 200px; }
+.agents-launchbar { display: flex; align-items: end; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: rgba(255, 255, 255, 0.35); }
+.agents-launch-field { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
+.agents-launch-field span { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.agents-launch-field select,
+.agents-launch-field input { min-width: 0; }
+.agents-launch-field-grow { flex: 1; min-width: 260px; }
 .agents-main { display: flex; flex: 1; min-height: 0; }
 .agents-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .agents-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-secondary); font-size: 0.9rem; }
 .agents-empty a { color: var(--accent-blue); text-decoration: none; font-weight: 500; }
+.approvals-empty-state { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.approval-info-card { border-color: rgba(96, 165, 250, 0.3); background: rgba(96, 165, 250, 0.08); }
+.approval-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; }

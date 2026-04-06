@@ -7,8 +7,10 @@ mod host;
 mod middleware;
 mod server;
 mod store;
+mod supervisor;
 mod terminal;
 mod transport;
+mod workdir;
 
 use clap::Parser;
 use config::{Cli, CliCommand, Settings};

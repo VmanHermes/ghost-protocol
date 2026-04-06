@@ -12,6 +12,7 @@ use tracing::{debug, warn};
 use crate::chat::broadcaster::{ChatBroadcaster, ChatEvent};
 use crate::middleware::permissions::PeerTier;
 use crate::store::chunks::TerminalChunkRecord;
+use crate::supervisor::SupervisorEvent;
 use crate::terminal::broadcaster::SessionBroadcaster;
 use super::http::AppState;
 
@@ -46,6 +47,8 @@ struct WsMessage {
     op: String,
     #[serde(default, rename = "sessionId")]
     session_id: Option<String>,
+    #[serde(default, rename = "contractId")]
+    contract_id: Option<String>,
     #[serde(default, rename = "afterChunkId")]
     after_chunk_id: Option<i64>,
     #[serde(default)]
@@ -89,6 +92,9 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
     let mut current_broadcaster: Option<Arc<SessionBroadcaster>> = None;
     let mut chat_rx: Option<broadcast::Receiver<ChatEvent>> = None;
     let mut _chat_broadcaster: Option<Arc<ChatBroadcaster>> = None;
+    let mut supervisor_rx: Option<broadcast::Receiver<SupervisorEvent>> = None;
+    let mut supervisor_session_filter: Option<String> = None;
+    let mut supervisor_contract_filter: Option<String> = None;
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
 
     loop {
@@ -143,6 +149,9 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
                             ChatEvent::Meta { session_id, tokens, context_pct } => {
                                 serde_json::json!({"op": "session_meta", "sessionId": session_id, "tokens": tokens, "contextPct": context_pct})
                             }
+                            ChatEvent::SessionRenamed { session_id, name } => {
+                                serde_json::json!({"op": "session_renamed", "sessionId": session_id, "name": name})
+                            }
                         };
                         if send_json(&mut socket, &msg).await.is_err() {
                             break;
@@ -157,7 +166,43 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
                 }
             }
 
-            // Priority 3: heartbeat
+            // Priority 3: forward supervisor events
+            supervisor_result = async {
+                match supervisor_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match supervisor_result {
+                    Ok(event) => {
+                        let session_match = supervisor_session_filter
+                            .as_deref()
+                            .map(|sid| event.session_id.as_deref() == Some(sid))
+                            .unwrap_or(true);
+                        let contract_match = supervisor_contract_filter
+                            .as_deref()
+                            .map(|cid| event.contract_id.as_deref() == Some(cid))
+                            .unwrap_or(true);
+                        if session_match && contract_match {
+                            let msg = serde_json::json!({
+                                "op": "supervisor_event",
+                                "event": event,
+                            });
+                            if send_json(&mut socket, &msg).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(lagged = n, "supervisor receiver lagged, some events lost");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        supervisor_rx = None;
+                    }
+                }
+            }
+
+            // Priority 4: heartbeat
             _ = heartbeat.tick() => {
                 let msg = serde_json::json!({
                     "op": "heartbeat",
@@ -168,7 +213,7 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
                 }
             }
 
-            // Priority 4: client messages
+            // Priority 5: client messages
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
@@ -184,6 +229,9 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, tier: PeerTier) {
                                     &mut current_broadcaster,
                                     &mut chat_rx,
                                     &mut _chat_broadcaster,
+                                    &mut supervisor_rx,
+                                    &mut supervisor_session_filter,
+                                    &mut supervisor_contract_filter,
                                     tier,
                                 ).await.is_err() {
                                     break;
@@ -230,6 +278,9 @@ async fn handle_op(
     current_broadcaster: &mut Option<Arc<SessionBroadcaster>>,
     chat_rx: &mut Option<broadcast::Receiver<ChatEvent>>,
     chat_broadcaster: &mut Option<Arc<ChatBroadcaster>>,
+    supervisor_rx: &mut Option<broadcast::Receiver<SupervisorEvent>>,
+    supervisor_session_filter: &mut Option<String>,
+    supervisor_contract_filter: &mut Option<String>,
     tier: PeerTier,
 ) -> Result<(), ()> {
     match msg.op.as_str() {
@@ -253,9 +304,53 @@ async fn handle_op(
                 *broadcast_rx = None;
             }
 
-            // Ensure attached
-            if let Err(e) = state.manager.ensure_attached(&session_id).await {
-                return send_error(socket, &format!("failed to attach: {e}")).await;
+            // Load session and only try to attach when it is still live.
+            let mut session = match state.store.get_terminal_session(&session_id) {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    return send_error(socket, &format!("session {session_id} not found")).await;
+                }
+                Err(e) => {
+                    return send_error(socket, &format!("db error: {e}")).await;
+                }
+            };
+
+            let wants_live_attach = matches!(session.status.as_str(), "created" | "running");
+            let mut attached_live = false;
+
+            if wants_live_attach {
+                match state.manager.ensure_attached(&session_id).await {
+                    Ok(()) => {
+                        attached_live = true;
+                    }
+                    Err(e) if e.contains("tmux session not found") => {
+                        let finished_at = Utc::now().to_rfc3339();
+                        if let Err(db_err) = state.store.update_terminal_session(
+                            &session_id,
+                            Some("exited"),
+                            None,
+                            Some(&finished_at),
+                            None,
+                            None,
+                            None,
+                        ) {
+                            return send_error(socket, &format!("failed to update exited session: {db_err}")).await;
+                        }
+
+                        session = match state.store.get_terminal_session(&session_id) {
+                            Ok(Some(updated)) => updated,
+                            Ok(None) => {
+                                return send_error(socket, &format!("session {session_id} disappeared during replay")).await;
+                            }
+                            Err(db_err) => {
+                                return send_error(socket, &format!("db error: {db_err}")).await;
+                            }
+                        };
+                    }
+                    Err(e) => {
+                        return send_error(socket, &format!("failed to attach: {e}")).await;
+                    }
+                }
             }
 
             // Replay chunks from DB
@@ -275,21 +370,11 @@ async fn handle_op(
                 }
             }
 
-            // Get session record
-            let session = match state.store.get_terminal_session(&session_id) {
-                Ok(Some(s)) => s,
-                Ok(None) => {
-                    return send_error(socket, &format!("session {session_id} not found")).await;
-                }
-                Err(e) => {
-                    return send_error(socket, &format!("db error: {e}")).await;
-                }
-            };
-
             // Send subscribed confirmation
             let reply = serde_json::json!({
                 "op": "subscribed_terminal",
                 "session": session,
+                "liveAttached": attached_live,
             });
             send_json(socket, &reply).await?;
 
@@ -410,6 +495,18 @@ async fn handle_op(
             }
 
             let reply = serde_json::json!({ "op": "subscribed_chat", "sessionId": session_id });
+            send_json(socket, &reply).await
+        }
+
+        "subscribe_supervisor" => {
+            *supervisor_rx = Some(state.supervisor_tx.subscribe());
+            *supervisor_session_filter = msg.session_id.clone();
+            *supervisor_contract_filter = msg.contract_id.clone();
+            let reply = serde_json::json!({
+                "op": "subscribed_supervisor",
+                "sessionId": msg.session_id,
+                "contractId": msg.contract_id,
+            });
             send_json(socket, &reply).await
         }
 

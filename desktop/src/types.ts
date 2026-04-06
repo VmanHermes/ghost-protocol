@@ -108,9 +108,14 @@ export type TerminalSession = {
   lastChunkAt?: string | null;
   pid?: number | null;
   exitCode?: number | null;
+  projectId?: string | null;
   parentSessionId?: string | null;
+  rootSessionId?: string | null;
   hostId?: string | null;
   hostName?: string | null;
+  agentId?: string | null;
+  driverKind?: "terminal_driver" | "structured_chat_driver" | "api_driver" | "ide_driver";
+  capabilities?: string[];
 };
 
 export type TerminalChunk = {
@@ -139,6 +144,43 @@ export type SystemStatus = {
   };
 };
 
+export type MachineInfo = {
+  hostname: string;
+  tailscaleIp: string | null;
+  daemonVersion: string;
+  os: string;
+  cpu: {
+    cores: number;
+    model: string;
+  };
+  ramGb: number;
+  gpu: {
+    model: string;
+    vramGb: number;
+    driver: string;
+    utilizationPercent: number | null;
+    vramUsedGb: number | null;
+  } | null;
+  tools: {
+    tmux: string | null;
+    hermes: string | null;
+    ollama: string | null;
+    sshUser: string;
+    agents: AgentInfo[];
+  };
+};
+
+export type MachineStatus = {
+  cpuPercent: number | null;
+  ramUsedGb: number;
+  ramTotalGb: number;
+  gpuPercent: number | null;
+  gpuVramUsedGb: number | null;
+  activeSessions: number;
+  uptimeHours: number;
+  notableProcesses: Array<Record<string, unknown>>;
+};
+
 export type ConversationDetail = {
   conversation: Conversation;
   messages: Message[];
@@ -153,7 +195,10 @@ export type LocalTerminalSession = {
   id: string;
   status: "running" | "exited" | "terminated" | "error";
   createdAt: string;
+  finishedAt?: string | null;
   exitCode?: number | null;
+  name?: string | null;
+  workdir?: string | null;
 };
 
 export type TerminalSource =
@@ -184,6 +229,8 @@ export type HostConnection = {
   runs: RunRecord[] | null;
   conversations: Conversation[] | null;
   systemStatus: SystemStatus | null;
+  machineInfo: MachineInfo | null;
+  machineStatus: MachineStatus | null;
 };
 
 // --- Peer permissions types (Phase 2d) ---
@@ -259,10 +306,66 @@ export type ChatMessageEvent = {
   message: ChatMessage;
 };
 
+export type WorkSessionViews = {
+  chat: boolean;
+  terminal: boolean;
+  logs: boolean;
+  artifacts: boolean;
+  approvals: boolean;
+  delegation: boolean;
+  openCompanionTerminal: boolean;
+  reopenAsTerminal: boolean;
+  safeModeSwitch: boolean;
+};
+
+export type DelegationContract = {
+  id: string;
+  parentSessionId: string;
+  requesterAgentId: string | null;
+  targetHostId: string | null;
+  targetAgentId: string;
+  task: string;
+  allowedSkillsJson: string;
+  toolAllowlistJson: string;
+  artifactInputsJson: string;
+  budgetTokens: number | null;
+  budgetSecs: number | null;
+  approvalMode: string;
+  experimentalCommEnabled: boolean;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentMailboxMessage = {
+  id: string;
+  contractId: string;
+  fromSessionId: string;
+  toSessionId: string;
+  kind: string;
+  content: string;
+  visibility: string;
+  correlationId: string | null;
+  createdAt: string;
+};
+
+export type SkillCandidate = {
+  id: string;
+  sourceSessionId: string;
+  traceRefsJson: string;
+  proposedChange: string;
+  riskLevel: string;
+  status: string;
+  reviewer: string | null;
+  promotedSkillVersion: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+};
+
 export type ChatStatusEvent = {
   op: "chat_status";
   sessionId: string;
-  status: "thinking" | "tool_use" | "idle" | "error";
+  status: "thinking" | "tool_use" | "idle" | "error" | "exited" | "terminated";
 };
 
 export type SessionMetaEvent = {

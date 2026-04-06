@@ -119,6 +119,8 @@ where
 /// Extractor that passes only if the peer's tier >= ReadOnly.
 pub struct RequireReadOnly;
 
+pub struct CurrentPeerTier(pub PeerTier);
+
 impl<S> FromRequestParts<S> for RequireReadOnly
 where
     S: Send + Sync,
@@ -137,6 +139,22 @@ where
         } else {
             Err(forbidden_response("read-only tier required"))
         }
+    }
+}
+
+impl<S> FromRequestParts<S> for CurrentPeerTier
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(CurrentPeerTier(
+            parts.extensions
+                .get::<PeerTier>()
+                .copied()
+                .unwrap_or(PeerTier::NoAccess),
+        ))
     }
 }
 

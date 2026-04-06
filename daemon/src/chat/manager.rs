@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::chat::adapters::{adapter_for_agent, AdapterEvent};
@@ -17,6 +17,13 @@ struct ManagedChatProcess {
     child: Child,
     stdin_tx: tokio::sync::mpsc::Sender<String>,
     agent_id: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ChatSessionLaunchConfig {
+    pub system_prompt: Option<String>,
+    pub mcp_config: Option<String>,
+    pub allowed_tools: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -35,19 +42,37 @@ impl ChatProcessManager {
         }
     }
 
-    fn build_chat_command(agent: &AgentInfo, session_id: &str) -> (String, Vec<String>) {
+    fn build_chat_command(
+        agent: &AgentInfo,
+        session_id: &str,
+        launch: &ChatSessionLaunchConfig,
+    ) -> (String, Vec<String>) {
         match agent.id.as_str() {
             "claude-code" => {
                 let program = "claude".to_string();
-                let args = vec![
+                let mut args = vec![
                     "-p".to_string(),
+                    "--verbose".to_string(),
                     "--session-id".to_string(),
                     session_id.to_string(),
                     "--input-format".to_string(),
                     "stream-json".to_string(),
                     "--output-format".to_string(),
                     "stream-json".to_string(),
+                    "--include-partial-messages".to_string(),
                 ];
+                if let Some(system_prompt) = launch.system_prompt.as_ref() {
+                    args.push("--append-system-prompt".to_string());
+                    args.push(system_prompt.clone());
+                }
+                if let Some(mcp_config) = launch.mcp_config.as_ref() {
+                    args.push("--mcp-config".to_string());
+                    args.push(mcp_config.clone());
+                }
+                if !launch.allowed_tools.is_empty() {
+                    args.push("--allowedTools".to_string());
+                    args.push(launch.allowed_tools.join(","));
+                }
                 (program, args)
             }
             _ if agent.command.contains(' ') => {
@@ -68,21 +93,51 @@ impl ChatProcessManager {
         session_id: &str,
         agent: &AgentInfo,
         workdir: &str,
+        launch: ChatSessionLaunchConfig,
     ) -> Result<(), String> {
-        let (program, args) = Self::build_chat_command(agent, session_id);
+        let workdir = crate::workdir::expand_workdir(workdir);
+        let (program, args) = Self::build_chat_command(agent, session_id, &launch);
 
         let mut child = Command::new(&program)
             .args(&args)
-            .current_dir(workdir)
+            .current_dir(&workdir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| format!("failed to spawn {}: {e}", agent.name))?;
+            .map_err(|e| {
+                error!(
+                    session_id = %session_id,
+                    agent = %agent.name,
+                    program = %program,
+                    workdir = %workdir,
+                    error = %e,
+                    "failed to spawn chat session"
+                );
+                format!("failed to spawn {}: {e}", agent.name)
+            })?;
 
         let stdin = child.stdin.take().ok_or("failed to capture stdin")?;
         let stdout = child.stdout.take().ok_or("failed to capture stdout")?;
+        let stderr = child.stderr.take().ok_or("failed to capture stderr")?;
+
+        // Stderr reader task
+        let session_id_err = session_id.to_string();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        warn!(session_id = %session_id_err, stderr = %line.trim(), "chat process stderr");
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
 
         let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(64);
 
@@ -122,6 +177,12 @@ impl ChatProcessManager {
         let store = self.store.clone();
         let bc = Arc::clone(&broadcaster);
         let processes = Arc::clone(&self.processes);
+        let managed_for_wait = Arc::clone(
+            self.processes
+                .lock().await
+                .get(session_id)
+                .ok_or_else(|| format!("missing managed process for session {session_id}"))?,
+        );
 
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
@@ -188,9 +249,53 @@ impl ChatProcessManager {
                 }
             }
 
+            let (mut exit_status, exit_code) = {
+                let mut managed = managed_for_wait.lock().await;
+                match managed.child.wait().await {
+                    Ok(status) => {
+                        let code = status.code();
+                        let mapped = if status.success() { "exited" } else { "error" };
+                        (mapped.to_string(), code)
+                    }
+                    Err(_) => ("error".to_string(), None),
+                }
+            };
+
+            if let Ok(Some(existing)) = store.get_terminal_session(&session_id_read) {
+                if existing.status == "terminated" {
+                    exit_status = "terminated".to_string();
+                }
+            }
+
+            let finished_at = chrono::Utc::now().to_rfc3339();
+            store
+                .update_terminal_session(
+                    &session_id_read,
+                    Some(&exit_status),
+                    None,
+                    Some(&finished_at),
+                    None,
+                    None,
+                    exit_code,
+                )
+                .ok();
+
+            let summary = match exit_code {
+                Some(code) => format!("Session ended ({exit_status}, code {code})."),
+                None => format!("Session ended ({exit_status})."),
+            };
+            if let Ok(chat_msg) = store.create_chat_message(
+                &Uuid::new_v4().to_string(),
+                &session_id_read,
+                "system",
+                &summary,
+            ) {
+                bc.send(ChatEvent::Message { message: chat_msg });
+            }
+
             bc.send(ChatEvent::Status {
                 session_id: session_id_read.clone(),
-                status: "idle".into(),
+                status: exit_status,
             });
 
             processes.lock().await.remove(&session_id_read);
@@ -241,6 +346,18 @@ impl ChatProcessManager {
             managed.child.kill().await.map_err(|e| format!("kill failed: {e}"))?;
         }
         self.broadcasters.lock().await.remove(session_id);
+        let finished_at = chrono::Utc::now().to_rfc3339();
+        self.store
+            .update_terminal_session(
+                session_id,
+                Some("terminated"),
+                None,
+                Some(&finished_at),
+                None,
+                None,
+                None,
+            )
+            .ok();
         Ok(())
     }
 

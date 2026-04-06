@@ -141,10 +141,15 @@ export function Sidebar({
         {sortedHosts.map((conn) => (
           <div key={conn.host.id} className="sidebar-host-row">
             <span className={`status-dot ${conn.state}`} />
-            <span className="sidebar-host-name">{conn.host.name}</span>
-            <span className="sidebar-host-status">
-              {conn.state === "connected" ? "connected" : conn.state === "connecting" ? "connecting" : "unreachable"}
-            </span>
+            <div className="sidebar-host-text">
+              <span className="sidebar-host-name">{conn.host.name}</span>
+              <span className="sidebar-host-status">
+                {conn.machineInfo?.daemonVersion
+                  ? `v${conn.machineInfo.daemonVersion} · `
+                  : ""}
+                {conn.state === "connected" ? "connected" : conn.state === "connecting" ? "connecting" : "unreachable"}
+              </span>
+            </div>
             <button
               className="sidebar-host-remove"
               onClick={() => onRemoveHost(conn.host.id)}

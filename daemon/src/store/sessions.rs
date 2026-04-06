@@ -1,6 +1,6 @@
 use chrono::Utc;
 use rusqlite::params;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::Store;
 
@@ -24,9 +24,143 @@ pub struct TerminalSessionRecord {
     pub parent_session_id: Option<String>,
     pub host_id: Option<String>,
     pub host_name: Option<String>,
+    pub root_session_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub driver_kind: String,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkSessionRecord {
+    pub id: String,
+    pub project_id: Option<String>,
+    pub parent_session_id: Option<String>,
+    pub root_session_id: Option<String>,
+    pub host_id: Option<String>,
+    pub host_name: Option<String>,
+    pub agent_id: Option<String>,
+    pub driver_kind: String,
+    pub state: String,
+    pub capabilities: Vec<String>,
+    pub name: Option<String>,
+    pub mode: String,
+    pub session_type: String,
+    pub workdir: String,
+    pub command: Vec<String>,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub last_chunk_at: Option<String>,
+    pub pid: Option<i64>,
+    pub exit_code: Option<i32>,
+}
+
+pub struct CreateWorkSessionParams<'a> {
+    pub id: &'a str,
+    pub mode: &'a str,
+    pub name: Option<&'a str>,
+    pub workdir: &'a str,
+    pub command: &'a [String],
+    pub session_type: &'a str,
+    pub project_id: Option<&'a str>,
+    pub parent_session_id: Option<&'a str>,
+    pub root_session_id: Option<&'a str>,
+    pub host_id: Option<&'a str>,
+    pub host_name: Option<&'a str>,
+    pub agent_id: Option<&'a str>,
+    pub driver_kind: &'a str,
+    pub capabilities: &'a [String],
+}
+
+impl TerminalSessionRecord {
+    pub fn as_work_session(&self) -> WorkSessionRecord {
+        WorkSessionRecord {
+            id: self.id.clone(),
+            project_id: self.project_id.clone(),
+            parent_session_id: self.parent_session_id.clone(),
+            root_session_id: self.root_session_id.clone(),
+            host_id: self.host_id.clone(),
+            host_name: self.host_name.clone(),
+            agent_id: self.agent_id.clone(),
+            driver_kind: self.driver_kind.clone(),
+            state: self.status.clone(),
+            capabilities: self.capabilities.clone(),
+            name: self.name.clone(),
+            mode: self.mode.clone(),
+            session_type: self.session_type.clone(),
+            workdir: self.workdir.clone(),
+            command: self.command.clone(),
+            created_at: self.created_at.clone(),
+            started_at: self.started_at.clone(),
+            finished_at: self.finished_at.clone(),
+            last_chunk_at: self.last_chunk_at.clone(),
+            pid: self.pid,
+            exit_code: self.exit_code,
+        }
+    }
 }
 
 impl Store {
+    pub fn create_work_session(
+        &self,
+        input: CreateWorkSessionParams<'_>,
+    ) -> Result<TerminalSessionRecord, rusqlite::Error> {
+        let now = Utc::now().to_rfc3339();
+        let command_json = serde_json::to_string(input.command).unwrap();
+        let capabilities_json = serde_json::to_string(input.capabilities).unwrap();
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO terminal_sessions (
+                id, mode, status, name, workdir, command_json, created_at, session_type,
+                project_id, parent_session_id, root_session_id, host_id, host_name, agent_id,
+                driver_kind, capabilities_json
+             )
+             VALUES (?1, ?2, 'created', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                input.id,
+                input.mode,
+                input.name,
+                input.workdir,
+                command_json,
+                now,
+                input.session_type,
+                input.project_id,
+                input.parent_session_id,
+                input.root_session_id,
+                input.host_id,
+                input.host_name,
+                input.agent_id,
+                input.driver_kind,
+                capabilities_json,
+            ],
+        )?;
+
+        Ok(TerminalSessionRecord {
+            id: input.id.to_string(),
+            mode: input.mode.to_string(),
+            status: "created".to_string(),
+            name: input.name.map(|s| s.to_string()),
+            workdir: input.workdir.to_string(),
+            command: input.command.to_vec(),
+            created_at: now,
+            started_at: None,
+            finished_at: None,
+            last_chunk_at: None,
+            pid: None,
+            exit_code: None,
+            session_type: input.session_type.to_string(),
+            project_id: input.project_id.map(|s| s.to_string()),
+            parent_session_id: input.parent_session_id.map(|s| s.to_string()),
+            host_id: input.host_id.map(|s| s.to_string()),
+            host_name: input.host_name.map(|s| s.to_string()),
+            root_session_id: input.root_session_id.map(|s| s.to_string()),
+            agent_id: input.agent_id.map(|s| s.to_string()),
+            driver_kind: input.driver_kind.to_string(),
+            capabilities: input.capabilities.to_vec(),
+        })
+    }
+
     pub fn create_terminal_session(
         &self,
         id: &str,
@@ -37,32 +171,26 @@ impl Store {
         session_type: &str,
         project_id: Option<&str>,
     ) -> Result<TerminalSessionRecord, rusqlite::Error> {
-        let now = Utc::now().to_rfc3339();
-        let command_json = serde_json::to_string(command).unwrap();
-        let conn = self.conn();
-        conn.execute(
-            "INSERT INTO terminal_sessions (id, mode, status, name, workdir, command_json, created_at, session_type, project_id)
-             VALUES (?1, ?2, 'created', ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![id, mode, name, workdir, command_json, now, session_type, project_id],
-        )?;
-        Ok(TerminalSessionRecord {
-            id: id.to_string(),
-            mode: mode.to_string(),
-            status: "created".to_string(),
-            name: name.map(|s| s.to_string()),
-            workdir: workdir.to_string(),
-            command: command.to_vec(),
-            created_at: now,
-            started_at: None,
-            finished_at: None,
-            last_chunk_at: None,
-            pid: None,
-            exit_code: None,
-            session_type: session_type.to_string(),
-            project_id: project_id.map(|s| s.to_string()),
+        let capabilities = crate::supervisor::driver_capabilities(
+            crate::supervisor::DRIVER_TERMINAL,
+            true,
+            false,
+        );
+        self.create_work_session(CreateWorkSessionParams {
+            id,
+            mode,
+            name,
+            workdir,
+            command,
+            session_type,
+            project_id,
             parent_session_id: None,
+            root_session_id: None,
             host_id: None,
             host_name: None,
+            agent_id: None,
+            driver_kind: crate::supervisor::DRIVER_TERMINAL,
+            capabilities: &capabilities,
         })
     }
 
@@ -116,6 +244,19 @@ impl Store {
         Ok(())
     }
 
+    pub fn update_session_name(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE terminal_sessions SET name = ?1 WHERE id = ?2",
+            params![name, session_id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_terminal_session(
         &self,
         session_id: &str,
@@ -124,13 +265,17 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, name, workdir, command_json, created_at,
                     started_at, finished_at, last_chunk_at, pid, exit_code,
-                    session_type, project_id, parent_session_id, host_id, host_name
+                    session_type, project_id, parent_session_id, host_id, host_name,
+                    root_session_id, agent_id, driver_kind, capabilities_json
              FROM terminal_sessions WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![session_id], |row| {
             let command_json: String = row.get(5)?;
             let command: Vec<String> =
                 serde_json::from_str(&command_json).unwrap_or_default();
+            let capabilities_json: String = row.get(20)?;
+            let capabilities: Vec<String> =
+                serde_json::from_str(&capabilities_json).unwrap_or_default();
             Ok(TerminalSessionRecord {
                 id: row.get(0)?,
                 mode: row.get(1)?,
@@ -149,6 +294,10 @@ impl Store {
                 parent_session_id: row.get(14)?,
                 host_id: row.get(15)?,
                 host_name: row.get(16)?,
+                root_session_id: row.get(17)?,
+                agent_id: row.get(18)?,
+                driver_kind: row.get(19)?,
+                capabilities,
             })
         })?;
         match rows.next() {
@@ -164,13 +313,17 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, name, workdir, command_json, created_at,
                     started_at, finished_at, last_chunk_at, pid, exit_code,
-                    session_type, project_id, parent_session_id, host_id, host_name
+                    session_type, project_id, parent_session_id, host_id, host_name,
+                    root_session_id, agent_id, driver_kind, capabilities_json
              FROM terminal_sessions ORDER BY created_at DESC, id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             let command_json: String = row.get(5)?;
             let command: Vec<String> =
                 serde_json::from_str(&command_json).unwrap_or_default();
+            let capabilities_json: String = row.get(20)?;
+            let capabilities: Vec<String> =
+                serde_json::from_str(&capabilities_json).unwrap_or_default();
             Ok(TerminalSessionRecord {
                 id: row.get(0)?,
                 mode: row.get(1)?,
@@ -189,9 +342,20 @@ impl Store {
                 parent_session_id: row.get(14)?,
                 host_id: row.get(15)?,
                 host_name: row.get(16)?,
+                root_session_id: row.get(17)?,
+                agent_id: row.get(18)?,
+                driver_kind: row.get(19)?,
+                capabilities,
             })
         })?;
         rows.collect()
+    }
+
+    pub fn get_work_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<WorkSessionRecord>, rusqlite::Error> {
+        Ok(self.get_terminal_session(session_id)?.map(|record| record.as_work_session()))
     }
 
     pub fn terminate_incomplete_sessions(&self) -> Result<usize, rusqlite::Error> {

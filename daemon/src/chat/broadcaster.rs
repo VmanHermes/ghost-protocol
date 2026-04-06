@@ -12,6 +12,7 @@ pub enum ChatEvent {
     Message { message: ChatMessage },
     Status { session_id: String, status: String },
     Meta { session_id: String, tokens: Option<u64>, context_pct: Option<f64> },
+    SessionRenamed { session_id: String, name: String },
 }
 
 pub struct ChatBroadcaster {

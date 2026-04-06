@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { listSystemLogs, type BackendLogEntry } from "../api";
 import { appLog, LogEntry, LogLevel } from "../log";
-
-type BackendLogEntry = {
-  ts: string;
-  level: string;
-  logger: string;
-  message: string;
-};
 
 type Props = {
   baseUrl: string | null;
@@ -39,7 +32,7 @@ export function LogViewer({ baseUrl }: Props) {
   const fetchServerLogs = useCallback(async () => {
     if (!baseUrl) return;
     try {
-      const data = await api<BackendLogEntry[]>(baseUrl, "/api/system/logs?limit=300");
+      const data = await listSystemLogs(baseUrl, 300);
       setServerLogs(data);
     } catch {
       // Server might be down — that's exactly when we need client logs

@@ -7,6 +7,7 @@ export type UseChatSocketOptions = {
   sessionId: string | null;
   isActive: boolean;
   onError?: (message: string) => void;
+  onSessionRenamed?: (sessionId: string, name: string) => void;
 };
 
 export type ChatSessionMeta = {
@@ -24,11 +25,28 @@ export type UseChatSocketReturn = {
   sendMessage: (content: string) => void;
 };
 
+function mergeStreamingText(current: string, incoming: string): string {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  if (incoming.startsWith(current)) return incoming;
+  if (current.endsWith(incoming)) return current;
+
+  const maxOverlap = Math.min(current.length, incoming.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (current.slice(-overlap) === incoming.slice(0, overlap)) {
+      return current + incoming.slice(overlap);
+    }
+  }
+
+  return current + incoming;
+}
+
 export function useChatSocket({
   baseUrl,
   sessionId,
   isActive,
   onError,
+  onSessionRenamed,
 }: UseChatSocketOptions): UseChatSocketReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamingDelta, setStreamingDelta] = useState("");
@@ -41,12 +59,14 @@ export function useChatSocket({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = useRef(500);
+  const streamingMessageIdRef = useRef<string | null>(null);
 
   // Reset state when session changes
   useEffect(() => {
     setMessages([]);
     setStreamingDelta("");
     setStreamingMessageId(null);
+    streamingMessageIdRef.current = null;
     setMeta({ tokens: null, contextPct: null, status: "idle" });
   }, [sessionId]);
 
@@ -82,12 +102,18 @@ export function useChatSocket({
               });
               setStreamingDelta("");
               setStreamingMessageId(null);
+              streamingMessageIdRef.current = null;
             }
             break;
           case "chat_delta":
             if (data.delta && data.messageId) {
+              if (streamingMessageIdRef.current && streamingMessageIdRef.current !== data.messageId) {
+                setStreamingDelta(data.delta);
+              } else {
+                setStreamingDelta((prev) => mergeStreamingText(prev, data.delta));
+              }
+              streamingMessageIdRef.current = data.messageId;
               setStreamingMessageId(data.messageId);
-              setStreamingDelta((prev) => prev + data.delta);
             }
             break;
           case "chat_status":
@@ -101,6 +127,11 @@ export function useChatSocket({
               tokens: data.tokens ?? prev.tokens,
               contextPct: data.contextPct ?? prev.contextPct,
             }));
+            break;
+          case "session_renamed":
+            if (data.sessionId && data.name) {
+              onSessionRenamed?.(data.sessionId, data.name);
+            }
             break;
           case "subscribed_chat":
             break;
@@ -133,7 +164,7 @@ export function useChatSocket({
       wsRef.current = null;
       setIsConnected(false);
     };
-  }, [baseUrl, sessionId, isActive, onError]);
+  }, [baseUrl, sessionId, isActive, onError, onSessionRenamed]);
 
   const sendMessage = useCallback(
     (content: string) => {

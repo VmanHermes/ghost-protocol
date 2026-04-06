@@ -6,6 +6,8 @@ pub mod discoveries;
 pub mod outcomes;
 pub mod projects;
 pub mod chat;
+pub mod delegations;
+pub mod skills;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -43,6 +45,8 @@ impl Store {
             "ALTER TABLE terminal_sessions ADD COLUMN project_id TEXT REFERENCES projects(id);"
         ).ok();
         conn.execute_batch(include_str!("../../migrations/007_session_delegation.sql"))
+            .ok(); // idempotent — ALTER TABLE may fail if columns already exist
+        conn.execute_batch(include_str!("../../migrations/008_supervisor_core.sql"))
             .ok(); // idempotent — ALTER TABLE may fail if columns already exist
 
         Ok(Store {

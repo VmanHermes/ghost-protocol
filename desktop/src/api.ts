@@ -1,4 +1,16 @@
-import type { PeerPermissionRecord, PendingApprovalRecord, PermissionTier, DiscoveredPeer, AgentInfo, ProjectRecord, ChatMessage, TerminalSession } from "./types";
+import type {
+  PeerPermissionRecord,
+  PendingApprovalRecord,
+  PermissionTier,
+  DiscoveredPeer,
+  AgentInfo,
+  ProjectRecord,
+  ChatMessage,
+  MachineInfo,
+  MachineStatus,
+  TerminalSession,
+  WorkSessionViews,
+} from "./types";
 
 export function wsUrlFromHttp(baseUrl: string) {
   if (baseUrl.startsWith("https://")) return baseUrl.replace("https://", "wss://") + "/ws";
@@ -26,6 +38,13 @@ export async function api<T>(baseUrl: string, path: string, init?: RequestInit):
   }
   return res.json() as Promise<T>;
 }
+
+export type BackendLogEntry = {
+  ts: string;
+  level: string;
+  logger: string;
+  message: string;
+};
 
 export type ApiHost = {
   id: string;
@@ -128,6 +147,21 @@ export async function listAgents(daemonUrl: string): Promise<AgentInfo[]> {
   return api<AgentInfo[]>(daemonUrl, "/api/agents");
 }
 
+export async function getMachineInfo(daemonUrl: string): Promise<MachineInfo> {
+  return api<MachineInfo>(daemonUrl, "/api/system/hardware");
+}
+
+export async function getMachineStatus(daemonUrl: string): Promise<MachineStatus> {
+  return api<MachineStatus>(daemonUrl, "/api/system/hardware/status");
+}
+
+export async function listSystemLogs(
+  daemonUrl: string,
+  limit = 300,
+): Promise<BackendLogEntry[]> {
+  return api<BackendLogEntry[]>(daemonUrl, `/api/system/logs?limit=${limit}`);
+}
+
 export async function listProjects(daemonUrl: string): Promise<ProjectRecord[]> {
   return api<ProjectRecord[]>(daemonUrl, "/api/projects");
 }
@@ -167,9 +201,42 @@ export async function switchSessionMode(
   sessionId: string,
   mode: "chat" | "terminal",
   confirmed = false,
-): Promise<{ session?: TerminalSession; warning?: string; needsConfirmation?: boolean }> {
+): Promise<{
+  session?: TerminalSession;
+  warning?: string;
+  needsConfirmation?: boolean;
+  companionAvailable?: boolean;
+  reopenSupported?: boolean;
+  openedCompanion?: boolean;
+  replacedSessionId?: string;
+}> {
   return api(daemonUrl, `/api/sessions/${sessionId}/switch-mode`, {
     method: "POST",
     body: JSON.stringify({ mode, confirmed }),
+  });
+}
+
+export async function getWorkSessionViews(
+  daemonUrl: string,
+  sessionId: string,
+): Promise<{ session: TerminalSession; views: WorkSessionViews }> {
+  return api(daemonUrl, `/api/work-sessions/${sessionId}/views`);
+}
+
+export async function createCompanionTerminal(
+  daemonUrl: string,
+  sessionId: string,
+): Promise<TerminalSession> {
+  return api(daemonUrl, `/api/work-sessions/${sessionId}/companion-terminal`, {
+    method: "POST",
+  });
+}
+
+export async function reopenWorkSession(
+  daemonUrl: string,
+  sessionId: string,
+): Promise<TerminalSession> {
+  return api(daemonUrl, `/api/work-sessions/${sessionId}/reopen`, {
+    method: "POST",
   });
 }

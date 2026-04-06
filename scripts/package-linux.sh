@@ -8,8 +8,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="0.2.1"
+VERSION="$(bash "$ROOT_DIR/scripts/version.sh")"
 DIST_DIR="$ROOT_DIR/dist/ghost-protocol-$VERSION"
+
+bash "$ROOT_DIR/scripts/sync-version.sh" >/dev/null
 
 echo "==> Building daemon..."
 cd "$ROOT_DIR/daemon"

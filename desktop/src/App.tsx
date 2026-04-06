@@ -1,12 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "./lib/platform";
-import { api, listHosts, addHostApi, removeHostApi, listDiscoveries, acceptDiscovery, dismissDiscovery, type ApiHost } from "./api";
+import {
+  api,
+  listHosts,
+  addHostApi,
+  removeHostApi,
+  listDiscoveries,
+  acceptDiscovery,
+  dismissDiscovery,
+  getMachineInfo,
+  getMachineStatus,
+  listSystemLogs,
+  listPermissions,
+  type ApiHost,
+} from "./api";
 import { appLog } from "./log";
 import type {
   DiscoveredPeer,
   HostConnection,
   LocalTerminalSession,
   MainView,
+  MachineInfo,
+  MachineStatus,
   SavedHost,
   TerminalSession,
 } from "./types";
@@ -17,10 +32,44 @@ import { PermissionsTab } from "./components/PermissionsTab";
 import "./App.css";
 
 import { AgentsView } from "./components/AgentsView";
+import packageJson from "../package.json";
 
 const LOCAL_DAEMON = "http://127.0.0.1:8787";
+const APP_VERSION = packageJson.version;
+
+const LOCAL_TERMINAL_CAPABILITIES = ["supports_resume", "supports_terminal_view"];
+
+function asLocalTerminalSession(session: LocalTerminalSession): TerminalSession {
+  return {
+    id: session.id,
+    mode: "terminal",
+    status: session.status,
+    name: session.name ?? "Shell",
+    workdir: session.workdir ?? "~",
+    command: [],
+    createdAt: session.createdAt,
+    startedAt: session.createdAt,
+    finishedAt: session.finishedAt ?? null,
+    lastChunkAt: null,
+    pid: null,
+    exitCode: session.exitCode ?? null,
+    projectId: null,
+    parentSessionId: null,
+    rootSessionId: null,
+    hostId: null,
+    hostName: "local",
+    agentId: null,
+    driverKind: "terminal_driver",
+    capabilities: LOCAL_TERMINAL_CAPABILITIES,
+  };
+}
 
 function App() {
+  const [localMachineInfo, setLocalMachineInfo] = useState<MachineInfo | null>(null);
+  const [localMachineStatus, setLocalMachineStatus] = useState<MachineStatus | null>(null);
+  const [isExportingDiagnostics, setIsExportingDiagnostics] = useState(false);
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
+
   // Multi-host state
   const [hosts, setHosts] = useState<SavedHost[]>([]);
 
@@ -40,6 +89,18 @@ function App() {
   }, [refreshHosts]);
 
   const [connections, setConnections] = useState<Map<string, HostConnection>>(new Map());
+
+  // Local daemon sessions (fetched directly, independent of hosts)
+  const [daemonSessions, setDaemonSessions] = useState<TerminalSession[]>([]);
+
+  const refreshDaemonSessions = useCallback(async () => {
+    try {
+      const sessions = await api<TerminalSession[]>(LOCAL_DAEMON, "/api/terminal/sessions");
+      setDaemonSessions(sessions);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Shared state (unchanged)
   const [mainView, setMainView] = useState<MainView>("agents");
@@ -101,6 +162,8 @@ function App() {
         runs: null,
         conversations: null,
         systemStatus: null,
+        machineInfo: null,
+        machineStatus: null,
       });
     }
     setConnections(initial);
@@ -111,10 +174,17 @@ function App() {
 
   const loadHostData = useCallback(async (hostId: string, url: string) => {
     try {
-      // Only load terminal sessions — conversations, runs, and system/status
-      // are not served by the Rust daemon yet.
-      const sessions = await api<TerminalSession[]>(url, "/api/terminal/sessions");
-      updateConnection(hostId, { sessions });
+      const [sessionsResult, machineInfoResult, machineStatusResult] = await Promise.allSettled([
+        api<TerminalSession[]>(url, "/api/terminal/sessions"),
+        getMachineInfo(url),
+        getMachineStatus(url),
+      ]);
+
+      updateConnection(hostId, {
+        sessions: sessionsResult.status === "fulfilled" ? sessionsResult.value : null,
+        machineInfo: machineInfoResult.status === "fulfilled" ? machineInfoResult.value : null,
+        machineStatus: machineStatusResult.status === "fulfilled" ? machineStatusResult.value : null,
+      });
     } catch (error) {
       appLog.error("app", `Failed to load data for host ${hostId}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -124,8 +194,34 @@ function App() {
 
   // Initialize hosts on mount
   useEffect(() => {
-    initializeHosts(hosts);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (hosts.length > 0) {
+      initializeHosts(hosts);
+    }
+  }, [hosts, initializeHosts]);
+
+  // Load local daemon sessions on mount
+  useEffect(() => {
+    refreshDaemonSessions();
+  }, [refreshDaemonSessions]);
+
+  const refreshLocalMachineMeta = useCallback(async () => {
+    try {
+      const [info, status] = await Promise.all([
+        getMachineInfo(LOCAL_DAEMON),
+        getMachineStatus(LOCAL_DAEMON),
+      ]);
+      setLocalMachineInfo(info);
+      setLocalMachineStatus(status);
+    } catch (error) {
+      appLog.warn("app", `Failed to load local machine metadata: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLocalMachineMeta();
+    const interval = setInterval(() => void refreshLocalMachineMeta(), 30000);
+    return () => clearInterval(interval);
+  }, [refreshLocalMachineMeta]);
 
   // Auto-spawn a local terminal on first mount
   const localSpawnedRef = useRef(false);
@@ -135,13 +231,15 @@ function App() {
     void handleCreateLocalSession();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lazy-load host data when a host becomes active for the first time
+  // Load session data for hosts once they become connected
   useEffect(() => {
-    if (!activeHostId || !activeHost) return;
-    const conn = connections.get(activeHostId);
-    if (!conn || conn.state !== "connected" || conn.sessions !== null) return;
-    void loadHostData(activeHostId, activeHost.url);
-  }, [activeHostId, activeHost, connections, loadHostData]);
+    for (const host of hosts) {
+      const conn = connections.get(host.id);
+      if (conn && conn.state === "connected" && conn.sessions === null) {
+        void loadHostData(host.id, host.url);
+      }
+    }
+  }, [hosts, connections, loadHostData]);
 
   // Health polling every 30s (ref keeps interval stable across host list changes)
   const hostsRef = useRef(hosts);
@@ -171,28 +269,80 @@ function App() {
     return () => clearInterval(interval);
   }, [refreshDiscoveries]);
 
+  useEffect(() => {
+    if (mainView !== "agents") return undefined;
+
+    const refreshSessions = () => {
+      void refreshDaemonSessions();
+      hosts.forEach((host) => {
+        const conn = connections.get(host.id);
+        if (conn?.state === "connected") {
+          void loadHostData(host.id, host.url);
+        }
+      });
+    };
+
+    refreshSessions();
+    const interval = setInterval(refreshSessions, 5000);
+    return () => clearInterval(interval);
+  }, [mainView, refreshDaemonSessions, hosts, connections, loadHostData]);
+
   // --- Action handlers ---
 
-  const handleCreateLocalSession = useCallback(async () => {
+  const handleCreateLocalSession = useCallback(async (workdir?: string | null) => {
     if (!isTauri()) return;
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const cols = 120;
       const rows = 30;
-      const sessionId = await invoke<string>("pty_spawn", { cols, rows, workdir: null });
+      const requestedWorkdir = workdir?.trim() ? workdir.trim() : null;
+      const sessionId = await invoke<string>("pty_spawn", { cols, rows, workdir: requestedWorkdir });
       const session: LocalTerminalSession = {
         id: sessionId,
         status: "running",
         createdAt: new Date().toISOString(),
+        name: "Shell",
+        workdir: requestedWorkdir ?? "~",
       };
       setLocalSessions((prev) => [...prev, session]);
       setActiveTerminalSessionId(sessionId);
       setMainView("agents");
+      return session;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       appLog.error("app", `Failed to spawn local terminal: ${msg}`);
       setActionError(`Failed to spawn local terminal: ${msg}`);
+      return null;
     }
+  }, []);
+
+  const handleLocalSessionStatusChange = useCallback((session: LocalTerminalSession) => {
+    setLocalSessions((prev) => {
+      const existing = prev.find((entry) => entry.id === session.id);
+      if (!existing) return [...prev, session];
+      return prev.map((entry) => (
+        entry.id === session.id
+          ? {
+            ...entry,
+            ...session,
+            name: session.name ?? entry.name,
+            workdir: session.workdir ?? entry.workdir,
+            finishedAt: session.finishedAt ?? entry.finishedAt,
+          }
+          : entry
+      ));
+    });
+  }, []);
+
+  const handleTerminateLocalSession = useCallback(async (sessionId: string) => {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("pty_kill", { sessionId });
+    setLocalSessions((prev) => prev.map((session) => (
+      session.id === sessionId
+        ? { ...session, status: "terminated", finishedAt: new Date().toISOString() }
+        : session
+    )));
   }, []);
 
   const handleAddHost = useCallback(async (name: string, url: string) => {
@@ -249,6 +399,104 @@ function App() {
     }
   }, [refreshDiscoveries]);
 
+  const fetchBackendDiagnostics = useCallback(async (baseUrl: string) => {
+    const [machineInfoResult, machineStatusResult, serverLogsResult, sessionsResult] = await Promise.allSettled([
+      getMachineInfo(baseUrl),
+      getMachineStatus(baseUrl),
+      listSystemLogs(baseUrl, 400),
+      api<TerminalSession[]>(baseUrl, "/api/terminal/sessions"),
+    ]);
+
+    return {
+      machineInfo: machineInfoResult.status === "fulfilled" ? machineInfoResult.value : null,
+      machineStatus: machineStatusResult.status === "fulfilled" ? machineStatusResult.value : null,
+      serverLogs: serverLogsResult.status === "fulfilled" ? serverLogsResult.value : null,
+      sessions: sessionsResult.status === "fulfilled" ? sessionsResult.value : null,
+      errors: [
+        machineInfoResult,
+        machineStatusResult,
+        serverLogsResult,
+        sessionsResult,
+      ]
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => String(result.reason)),
+    };
+  }, []);
+
+  const handleExportDiagnostics = useCallback(async () => {
+    setIsExportingDiagnostics(true);
+    setDiagnosticsStatus("");
+
+    try {
+      const [localSnapshot, remoteSnapshots] = await Promise.all([
+        fetchBackendDiagnostics(LOCAL_DAEMON),
+        Promise.all(hosts.map(async (host) => ({
+          host,
+          connection: connections.get(host.id) ?? null,
+          snapshot: await fetchBackendDiagnostics(host.url),
+        }))),
+      ]);
+      const permissions = await listPermissions(LOCAL_DAEMON).catch(() => []);
+
+      const payload = {
+        collectedAt: new Date().toISOString(),
+        appVersion: APP_VERSION,
+        mainView,
+        activeSessionId: activeTerminalSessionId,
+        local: {
+          daemonUrl: LOCAL_DAEMON,
+          machineInfo: localMachineInfo ?? localSnapshot.machineInfo,
+          machineStatus: localMachineStatus ?? localSnapshot.machineStatus,
+          daemonSessions,
+          localSessions,
+          discoveries,
+          permissions,
+          serverLogs: localSnapshot.serverLogs,
+          errors: localSnapshot.errors,
+        },
+        hosts: remoteSnapshots.map(({ host, connection, snapshot }) => ({
+          host,
+          state: connection?.state ?? "idle",
+          message: connection?.message ?? "",
+          machineInfo: connection?.machineInfo ?? snapshot.machineInfo,
+          machineStatus: connection?.machineStatus ?? snapshot.machineStatus,
+          sessions: connection?.sessions ?? snapshot.sessions,
+          serverLogs: snapshot.serverLogs,
+          errors: snapshot.errors,
+        })),
+        clientLogs: [...appLog.entries],
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `ghost-protocol-diagnostics-${new Date().toISOString().slice(0, 19)}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+
+      setDiagnosticsStatus("Diagnostics exported.");
+      appLog.info("diagnostics", "Exported diagnostics snapshot");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDiagnosticsStatus(`Export failed: ${message}`);
+      appLog.error("diagnostics", `Failed to export diagnostics: ${message}`);
+    } finally {
+      setIsExportingDiagnostics(false);
+    }
+  }, [
+    activeTerminalSessionId,
+    connections,
+    daemonSessions,
+    discoveries,
+    fetchBackendDiagnostics,
+    hosts,
+    localMachineInfo,
+    localMachineStatus,
+    localSessions,
+    mainView,
+  ]);
+
   // --- Render ---
 
   // Build connections array for Sidebar
@@ -257,16 +505,25 @@ function App() {
     [hosts, connections],
   );
 
-  // Flat list of all remote sessions for AgentsView
+  // Flat list of all sessions for AgentsView (local daemon + remote hosts)
   const allFlatSessions: TerminalSession[] = useMemo(() => {
-    const result: TerminalSession[] = [];
+    const result: TerminalSession[] = localSessions.map(asLocalTerminalSession);
+    result.push(...daemonSessions);
+    const daemonIds = new Set(daemonSessions.map((s) => s.id));
     connections.forEach((conn) => {
       if (conn.sessions) {
-        result.push(...conn.sessions);
+        for (const s of conn.sessions) {
+          if (!daemonIds.has(s.id)) result.push(s);
+        }
       }
     });
     return result;
-  }, [connections]);
+  }, [daemonSessions, connections, localSessions]);
+
+  const activeSession = useMemo(
+    () => allFlatSessions.find((session) => session.id === activeTerminalSessionId) ?? null,
+    [allFlatSessions, activeTerminalSessionId],
+  );
 
   return (
     <main className="shell">
@@ -286,9 +543,14 @@ function App() {
           daemonUrl={LOCAL_DAEMON}
           sessions={allFlatSessions}
           localSessions={localSessions}
+          activeSessionId={activeTerminalSessionId}
           visible={mainView === "agents"}
-          onCreateLocalSession={() => void handleCreateLocalSession()}
+          onSelectSession={setActiveTerminalSessionId}
+          onCreateLocalSession={handleCreateLocalSession}
+          onTerminateLocalSession={handleTerminateLocalSession}
+          onLocalSessionStatusChange={handleLocalSessionStatusChange}
           onRefreshSessions={() => {
+            void refreshDaemonSessions();
             hosts.forEach((h) => {
               const conn = connections.get(h.id);
               if (conn && conn.state === "connected") {
@@ -311,6 +573,38 @@ function App() {
             </div>
             <div className="settings-content">
               <div className="settings-section">
+                <h3>Versions</h3>
+                <div className="settings-info-grid">
+                  <div className="settings-info-item">
+                    <span className="settings-info-label">Desktop app</span>
+                    <span className="settings-info-value">v{APP_VERSION}</span>
+                  </div>
+                  <div className="settings-info-item">
+                    <span className="settings-info-label">Local daemon</span>
+                    <span className="settings-info-value">{localMachineInfo ? `v${localMachineInfo.daemonVersion}` : "Loading..."}</span>
+                  </div>
+                  <div className="settings-info-item">
+                    <span className="settings-info-label">Local host</span>
+                    <span className="settings-info-value">{localMachineInfo?.hostname ?? "Loading..."}</span>
+                  </div>
+                </div>
+                {hostConnections.length > 0 && (
+                  <div className="settings-host-list">
+                    {hostConnections.map((connection) => (
+                      <div key={connection.host.id} className="settings-host-item">
+                        <div>
+                          <div className="settings-host-name">{connection.host.name}</div>
+                          <div className="settings-host-meta">{connection.machineInfo?.os ?? connection.message}</div>
+                        </div>
+                        <div className="settings-host-version">
+                          {connection.machineInfo ? `v${connection.machineInfo.daemonVersion}` : "—"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="settings-section">
                 <h3>Permissions</h3>
                 <PermissionsTab daemonUrl={LOCAL_DAEMON} />
               </div>
@@ -325,14 +619,38 @@ function App() {
                     <span className="settings-info-label">Known hosts</span>
                     <span className="settings-info-value">{hosts.length}</span>
                   </div>
+                  <div className="settings-info-item">
+                    <span className="settings-info-label">Connected hosts</span>
+                    <span className="settings-info-value">{hostConnections.filter((connection) => connection.state === "connected").length}</span>
+                  </div>
+                  <div className="settings-info-item">
+                    <span className="settings-info-label">Local active sessions</span>
+                    <span className="settings-info-value">{localMachineStatus?.activeSessions ?? daemonSessions.filter((session) => session.status === "running").length}</span>
+                  </div>
                 </div>
+              </div>
+              <div className="settings-section">
+                <h3>Diagnostics</h3>
+                <p className="muted settings-help">
+                  Export a JSON snapshot with app logs, daemon logs, machine versions, sessions, and connection state for release testing.
+                </p>
+                <div className="settings-actions">
+                  <button
+                    className="btn-secondary"
+                    onClick={() => void handleExportDiagnostics()}
+                    disabled={isExportingDiagnostics}
+                  >
+                    {isExportingDiagnostics ? "Exporting..." : "Export Diagnostics"}
+                  </button>
+                </div>
+                {diagnosticsStatus && <div className="settings-status-note">{diagnosticsStatus}</div>}
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <RightPanel daemonUrl={LOCAL_DAEMON} />
+      <RightPanel daemonUrl={LOCAL_DAEMON} activeSession={activeSession} />
     </main>
   );
 }

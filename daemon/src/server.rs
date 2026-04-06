@@ -113,8 +113,10 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         store,
         manager,
         chat_manager,
+        supervisor_tx: tokio::sync::broadcast::channel(256).0,
         log_buffer,
         bind_address: settings.bind_hosts.join(","),
+        bind_port: settings.bind_port,
         allowed_cidrs: settings
             .allowed_cidrs
             .iter()
@@ -134,6 +136,11 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
             "/api/terminal/sessions",
             get(http::list_sessions).post(http::create_session),
         )
+        .route("/api/work-sessions", post(http::create_work_session))
+        .route("/api/work-sessions/{id}", get(http::get_work_session))
+        .route("/api/work-sessions/{id}/views", get(http::get_work_session_views))
+        .route("/api/work-sessions/{id}/companion-terminal", post(http::create_companion_terminal))
+        .route("/api/work-sessions/{id}/reopen", post(http::reopen_work_session))
         .route("/api/terminal/sessions/{id}", get(http::get_session))
         .route(
             "/api/terminal/sessions/{id}/input",
@@ -167,6 +174,11 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         .route("/api/chat/sessions/{id}/messages", get(http::list_chat_messages))
         .route("/api/chat/sessions/{id}/message", post(http::send_chat_message))
         .route("/api/sessions/{id}/switch-mode", post(http::switch_session_mode))
+        .route("/api/delegations", post(http::create_delegation))
+        .route("/api/delegations/{id}", get(http::get_delegation))
+        .route("/api/delegations/{id}/messages", get(http::list_delegation_messages).post(http::create_delegation_message))
+        .route("/api/skills/candidates", get(http::list_skill_candidates))
+        .route("/api/skills/candidates/{id}/promote", post(http::promote_skill_candidate))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
         .layer(middleware::from_fn_with_state(store_for_guard, tailscale_guard))

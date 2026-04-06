@@ -10,6 +10,7 @@ type Props = {
   sessionId: string | null;
   isLocal: boolean;
   isActive: boolean;
+  interactive?: boolean;
   onSessionStatusChange?: (session: TerminalSession | LocalTerminalSession) => void;
   onError?: (message: string) => void;
 };
@@ -26,7 +27,15 @@ const TERMINAL_THEME = {
   magenta: "#c084fc",
 };
 
-export function TerminalRenderer({ baseUrl, sessionId, isLocal, isActive, onSessionStatusChange, onError }: Props) {
+export function TerminalRenderer({
+  baseUrl,
+  sessionId,
+  isLocal,
+  isActive,
+  interactive = true,
+  onSessionStatusChange,
+  onError,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -34,9 +43,15 @@ export function TerminalRenderer({ baseUrl, sessionId, isLocal, isActive, onSess
   useEffect(() => {
     if (!containerRef.current || !isActive) return;
     const terminal = new Terminal({
-      cursorBlink: true, fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      theme: TERMINAL_THEME, allowProposedApi: true,
+      cursorBlink: true,
+      convertEol: false,
+      fontFamily: '"JetBrainsMono NF", "JetBrains Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
+      fontSize: 14,
+      letterSpacing: 0,
+      lineHeight: 1.0,
+      scrollback: 5000,
+      theme: TERMINAL_THEME,
+      allowProposedApi: true,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -65,22 +80,22 @@ export function TerminalRenderer({ baseUrl, sessionId, isLocal, isActive, onSess
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || !isActive || !sessionId) return;
+    if (!terminal || !isActive || !interactive || !sessionId) return;
     const sendInput = isLocal ? local.sendInput : remote.sendInput;
     const disposable = terminal.onData((data) => {
       if (isLocal) sendInput(data);
       else sendInput(data, false);
     });
     return () => disposable.dispose();
-  }, [isActive, sessionId, isLocal, local.sendInput, remote.sendInput]);
+  }, [interactive, isActive, sessionId, isLocal, local.sendInput, remote.sendInput]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || !isActive || !sessionId) return;
+    if (!terminal || !isActive || !interactive || !sessionId) return;
     const resize = isLocal ? local.resize : remote.resize;
     const disposable = terminal.onResize(({ cols, rows }) => resize(cols, rows));
     return () => disposable.dispose();
-  }, [isActive, sessionId, isLocal, local.resize, remote.resize]);
+  }, [interactive, isActive, sessionId, isLocal, local.resize, remote.resize]);
 
   return <div ref={containerRef} className="terminal-host" style={{ flex: 1, minHeight: 0 }} />;
 }

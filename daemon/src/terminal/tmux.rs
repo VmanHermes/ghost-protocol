@@ -10,8 +10,9 @@ pub fn session_name(session_id: &str) -> String {
 /// then configures it (status off, pane-border-status off, mouse off).
 pub fn new_session(session_id: &str, workdir: &str, shell: &str) -> Result<(), String> {
     let name = session_name(session_id);
+    let workdir = crate::workdir::expand_workdir(workdir);
 
-    debug!(session = %name, workdir, shell, "creating tmux session");
+    debug!(session = %name, workdir = %workdir, shell, "creating tmux session");
 
     let mut cmd = Command::new("tmux");
     cmd.args([
@@ -20,7 +21,7 @@ pub fn new_session(session_id: &str, workdir: &str, shell: &str) -> Result<(), S
         "-s", &name,
         "-x", "120",
         "-y", "32",
-        "-c", workdir,
+        "-c", &workdir,
     ]);
 
     // Multi-word commands (e.g., "ollama run llama3") need bash -c wrapping
@@ -45,6 +46,7 @@ pub fn new_session(session_id: &str, workdir: &str, shell: &str) -> Result<(), S
         ("status", "off"),
         ("pane-border-status", "off"),
         ("mouse", "off"),
+        ("remain-on-exit", "off"),
     ] {
         let set_output = Command::new("tmux")
             .args(["set-option", "-t", &name, option, value])

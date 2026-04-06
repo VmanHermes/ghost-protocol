@@ -130,6 +130,7 @@ export function useLocalTerminal({
           id: currentSessionId,
           status,
           createdAt: sessionCreatedAt,
+          finishedAt: status === "running" ? null : new Date().toISOString(),
           exitCode: event.payload.exit_code,
         };
         setSessionMeta(updated);

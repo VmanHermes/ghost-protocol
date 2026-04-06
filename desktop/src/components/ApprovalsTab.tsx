@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PendingApprovalRecord } from "../types";
-import { listApprovals, resolveApproval } from "../api";
+import type { PendingApprovalRecord, TerminalSession } from "../types";
+import { listApprovals, listChatMessages, resolveApproval } from "../api";
 
 type Props = {
   daemonUrl: string;
+  activeSession: TerminalSession | null;
   onPendingCountChange: (count: number) => void;
 };
+
+const APPROVAL_HINT_RE = /\b(needs your approval|need your approval|approval|approve|prompt to allow|allow it)\b/i;
 
 function formatAction(method: string, path: string): string {
   if (method === "POST" && path === "/api/terminal/sessions") return "Create terminal session";
@@ -38,8 +41,9 @@ function CountdownTimer({ expiresAt }: { expiresAt: string }) {
   return <span className="countdown">{display}</span>;
 }
 
-export function ApprovalsTab({ daemonUrl, onPendingCountChange }: Props) {
+export function ApprovalsTab({ daemonUrl, activeSession, onPendingCountChange }: Props) {
   const [approvals, setApprovals] = useState<PendingApprovalRecord[] | null>(null);
+  const [agentApprovalHint, setAgentApprovalHint] = useState<string | null>(null);
   const [resolving, setResolving] = useState<Set<string>>(new Set());
   const prevPendingCount = useRef<number>(-1);
 
@@ -62,6 +66,53 @@ export function ApprovalsTab({ daemonUrl, onPendingCountChange }: Props) {
     const timer = setInterval(() => void fetchApprovals(), 3_000);
     return () => clearInterval(timer);
   }, [fetchApprovals]);
+
+  useEffect(() => {
+    const isChatLike = activeSession && (
+      activeSession.mode === "chat"
+      || activeSession.driverKind === "structured_chat_driver"
+      || activeSession.driverKind === "api_driver"
+    );
+
+    if (!activeSession?.id || !isChatLike) {
+      setAgentApprovalHint(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const fetchHint = async () => {
+      try {
+        const messages = await listChatMessages(daemonUrl, activeSession.id);
+        if (cancelled) return;
+        const match = [...messages]
+          .reverse()
+          .find((message) => (
+            (message.role === "assistant" || message.role === "system")
+            && APPROVAL_HINT_RE.test(message.content)
+          ));
+
+        if (!match) {
+          setAgentApprovalHint(null);
+          return;
+        }
+
+        const compact = match.content.replace(/\s+/g, " ").trim();
+        setAgentApprovalHint(compact.length > 180 ? `${compact.slice(0, 179)}…` : compact);
+      } catch {
+        if (!cancelled) {
+          setAgentApprovalHint(null);
+        }
+      }
+    };
+
+    void fetchHint();
+    const timer = setInterval(() => void fetchHint(), 3_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeSession, daemonUrl]);
 
   const handleResolve = async (id: string, action: "approve" | "deny") => {
     setResolving((prev) => new Set(prev).add(id));
@@ -88,8 +139,13 @@ export function ApprovalsTab({ daemonUrl, onPendingCountChange }: Props) {
     .filter((a) => a.status !== "pending")
     .slice(0, 10);
 
-  if (approvals.length === 0) {
-    return <div className="empty-state">No approval requests</div>;
+  if (approvals.length === 0 && !agentApprovalHint) {
+    return (
+      <div className="empty-state approvals-empty-state">
+        <div>No daemon approval requests</div>
+        <div className="muted">Agent-native approval prompts can still appear inside the active session.</div>
+      </div>
+    );
   }
 
   return (
@@ -150,6 +206,19 @@ export function ApprovalsTab({ daemonUrl, onPendingCountChange }: Props) {
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {agentApprovalHint && (
+        <div className="approvals-section">
+          <div className="muted">Session hint</div>
+          <div className="approval-card approval-info-card">
+            <div className="approval-info">
+              <div className="approval-action">Agent reported an approval step</div>
+              <div className="approval-meta">{agentApprovalHint}</div>
+              <div className="approval-note">This prompt is still coming from the agent runtime, so it needs to be handled inside the session for now.</div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -11,7 +11,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="0.2.1"
+VERSION="$(bash "$ROOT_DIR/scripts/version.sh")"
+
+bash "$ROOT_DIR/scripts/sync-version.sh" >/dev/null
 
 # ---------------------------------------------------------------------------
 # Platform / architecture detection

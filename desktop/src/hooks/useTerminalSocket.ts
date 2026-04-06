@@ -147,7 +147,9 @@ export function useTerminalSocket({
         if (data.op === "subscribed_terminal") {
           appLog.info(SRC, `Subscribed, replaying ${data.replayed ?? 0} chunks`);
           if (data.session) {
-            setSessionMeta(data.session as TerminalSession);
+            const session = data.session as TerminalSession;
+            setSessionMeta(session);
+            onStatusChangeRef.current?.(session);
           }
         } else if (data.op === "terminal_chunk") {
           const chunk = data.chunk as TerminalChunk;

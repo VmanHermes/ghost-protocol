@@ -31,6 +31,13 @@ ln -sf "$ROOT_DIR/cli/target/debug/ghost" "$HOME/.local/bin/ghost"
 ln -sf "$ROOT_DIR/daemon/target/debug/ghost-protocol-daemon" "$HOME/.local/bin/ghost-protocol-daemon"
 echo "==> ghost CLI installed to ~/.local/bin/ghost"
 
+# Symlink daemon binary for Tauri sidecar
+TAURI_BIN_DIR="$ROOT_DIR/desktop/src-tauri/binaries"
+mkdir -p "$TAURI_BIN_DIR"
+TARGET_TRIPLE="$(rustc -vV | grep host | cut -d' ' -f2)"
+ln -sf "$ROOT_DIR/daemon/target/debug/ghost-protocol-daemon" "$TAURI_BIN_DIR/ghost-protocol-daemon-$TARGET_TRIPLE"
+ln -sf "$ROOT_DIR/cli/target/debug/ghost" "$TAURI_BIN_DIR/ghost-$TARGET_TRIPLE"
+
 # Ensure ~/.local/bin is in PATH for this session
 export PATH="$HOME/.local/bin:$PATH"
 

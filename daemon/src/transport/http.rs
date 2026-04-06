@@ -211,6 +211,7 @@ pub async fn health() -> Json<serde_json::Value> {
 
 pub async fn system_status(
     _tier: RequireReadOnly,
+    CurrentPeerTier(current_tier): CurrentPeerTier,
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
     let sessions = state.store.list_terminal_sessions().unwrap_or_default();
@@ -221,7 +222,10 @@ pub async fn system_status(
         "connection": {
             "bindHost": state.bind_address,
             "allowedCidrs": state.allowed_cidrs,
-        }
+        },
+        "peer": {
+            "currentTier": current_tier.as_str(),
+        },
     }))
 }
 

@@ -27,6 +27,7 @@ type Props = {
   connections: HostConnection[];
   activeSessionBaseUrl: string;
   localHostName: string | null;
+  localMachineIp: string | null;
   sessions: TerminalSession[];
   localSessions: LocalTerminalSession[];
   activeSessionId: string | null;
@@ -43,6 +44,7 @@ export function AgentsView({
   connections,
   activeSessionBaseUrl,
   localHostName,
+  localMachineIp,
   sessions,
   localSessions,
   activeSessionId,
@@ -68,6 +70,19 @@ export function AgentsView({
   const previousSessions = sessions.filter((session) => session.status !== "running" && session.status !== "created");
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
   const isLocalSession = localSessions.some((session) => session.id === activeSessionId);
+  const activeSessionTargetId = activeSession
+    ? (isLocalSession ? "local" : activeSession.hostId ?? "local")
+    : null;
+  const activeSessionWorkdir = activeSession?.workdir ?? "~";
+  const activeSessionProjectId = activeSession?.projectId ?? "";
+  const activeSessionViewMode = activeSession?.mode === "chat" ? "chat" : "terminal";
+
+  const formatTargetLabel = useCallback((name: string, ip: string | null, isLocal: boolean) => {
+    if (isLocal) {
+      return ip ? `${name} (local · ${ip})` : `${name} (local)`;
+    }
+    return ip ? `${name} (${ip})` : `${name} (remote)`;
+  }, []);
 
   const targetOptions = useMemo(() => [
     {
@@ -75,6 +90,7 @@ export function AgentsView({
       name: localHostName ?? "Local",
       baseUrl: daemonUrl,
       isLocal: true,
+      ip: localMachineIp,
     },
     ...connections
       .filter((connection) => connection.state === "connected")
@@ -83,8 +99,12 @@ export function AgentsView({
         name: connection.host.name,
         baseUrl: connection.host.url,
         isLocal: false,
+        ip: connection.machineInfo?.tailscaleIp ?? connection.host.url.replace(/^https?:\/\//, "").replace(/:\d+$/, ""),
       })),
-  ], [connections, daemonUrl, localHostName]);
+  ].map((target) => ({
+    ...target,
+    label: formatTargetLabel(target.name, target.ip, target.isLocal),
+  })), [connections, daemonUrl, formatTargetLabel, localHostName, localMachineIp]);
 
   const selectedTarget = targetOptions.find((target) => target.id === selectedTargetId) ?? targetOptions[0];
   const launchDaemonUrl = selectedTarget?.baseUrl ?? daemonUrl;
@@ -141,22 +161,21 @@ export function AgentsView({
   }, [launchDaemonUrl]);
 
   useEffect(() => {
-    const session = sessions.find((entry) => entry.id === activeSessionId);
-    if (!session) return;
+    if (!activeSessionId || !activeSessionTargetId) return;
 
-    setSelectedTargetId(
-      localSessions.some((entry) => entry.id === activeSessionId)
-        ? "local"
-        : session.hostId ?? "local",
-    );
-    setLaunchWorkdir(session.workdir || "~");
-    setActiveMode(session.mode === "chat" ? "chat" : "terminal");
+    setSelectedTargetId(activeSessionTargetId);
+    setLaunchWorkdir(activeSessionWorkdir);
+    setActiveMode(activeSessionViewMode);
+  }, [activeSessionId, activeSessionTargetId, activeSessionViewMode, activeSessionWorkdir]);
 
-    const matchedProject = session.projectId
-      ? projects.find((project) => project.id === session.projectId)
-      : projects.find((project) => project.workdir === session.workdir);
-    setSelectedProjectId(matchedProject?.id ?? "");
-  }, [activeSessionId, localSessions, projects, sessions]);
+  useEffect(() => {
+    if (!activeSession) return;
+
+    const matchedProject = activeSessionProjectId
+      ? projects.find((project) => project.id === activeSessionProjectId)
+      : projects.find((project) => project.workdir === activeSessionWorkdir);
+    setSelectedProjectId(matchedProject?.id ?? activeSessionProjectId);
+  }, [activeSession, activeSessionProjectId, activeSessionWorkdir, projects]);
 
   const handleSessionRenamed = useCallback(() => {
     void onRefreshSessions();
@@ -357,7 +376,7 @@ export function AgentsView({
         >
           {targetOptions.map((target) => (
             <option key={target.id} value={target.id}>
-              {target.isLocal ? `${target.name} (local)` : target.name}
+              {target.label}
             </option>
           ))}
         </select>

@@ -142,6 +142,9 @@ export type SystemStatus = {
     telegramEnabled: boolean;
     allowedCidrs: string[];
   };
+  peer?: {
+    currentTier: PermissionTier;
+  };
 };
 
 export type MachineInfo = {

@@ -1,4 +1,39 @@
+use std::collections::HashMap;
+
 use serde_json::{json, Value};
+
+fn extract_requester_tier(payload: &Value) -> Option<&str> {
+    payload
+        .get("peer")
+        .and_then(|peer| peer.get("currentTier"))
+        .and_then(Value::as_str)
+}
+
+fn local_grant_tier<'a>(perms_data: &'a Value, ip: &str) -> &'a str {
+    perms_data
+        .as_array()
+        .and_then(|arr| arr.iter().find(|perm| perm["tailscaleIp"].as_str() == Some(ip)))
+        .and_then(|perm| perm["tier"].as_str())
+        .unwrap_or("no-access")
+}
+
+fn describe_host_status(status: &str) -> &str {
+    match status {
+        "permission-required" => "reachable, but permission required",
+        other => other,
+    }
+}
+
+fn describe_remote_access_tier(tier: Option<&str>) -> &'static str {
+    match tier {
+        Some("full-access") => "full-access",
+        Some("approval-required") => "approval-required",
+        Some("read-only") => "read-only",
+        Some("no-access") => "no-access",
+        Some(_) => "unknown",
+        None => "unknown",
+    }
+}
 
 pub struct ResourceBuilder {
     port: u16,
@@ -18,6 +53,40 @@ impl ResourceBuilder {
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap_or_default()
+    }
+
+    async fn remote_access_tiers(&self, hosts_data: &Value) -> HashMap<String, Option<String>> {
+        let mut tiers = HashMap::new();
+
+        if let Some(hosts) = hosts_data["hosts"].as_array() {
+            for host in hosts {
+                let ip = host["tailscaleIp"].as_str().unwrap_or_default();
+                if ip.is_empty() {
+                    continue;
+                }
+
+                let base_url = host["url"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("http://{ip}:8787"));
+                let tier = match self.client()
+                    .get(format!("{base_url}/api/system/status"))
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => {
+                        let body = resp.json::<Value>().await.unwrap_or_else(|_| json!({}));
+                        extract_requester_tier(&body).map(str::to_string)
+                    }
+                    Ok(resp) if resp.status() == reqwest::StatusCode::FORBIDDEN => Some("no-access".to_string()),
+                    _ => None,
+                };
+
+                tiers.insert(ip.to_string(), tier);
+            }
+        }
+
+        tiers
     }
 
     pub async fn machine_info(&self) -> Result<Value, Box<dyn std::error::Error>> {
@@ -138,6 +207,7 @@ impl ResourceBuilder {
             Ok(resp) => resp.json().await.unwrap_or(json!([])),
             Err(_) => json!([]),
         };
+        let remote_access = self.remote_access_tiers(&hosts_data).await;
 
         let hostname = info["hostname"].as_str().unwrap_or("this machine");
         let tailscale_ip = info["tailscaleIp"].as_str().unwrap_or("unknown");
@@ -176,18 +246,15 @@ impl ResourceBuilder {
                     .as_f64()
                     .map(|r| format!("{r:.0}GB RAM"))
                     .unwrap_or_else(|| "? RAM".to_string());
-                let hstatus = match h["status"].as_str().unwrap_or("unknown") {
-                    "permission-required" => "reachable, but permission required",
-                    other => other,
-                };
+                let hstatus = describe_host_status(h["status"].as_str().unwrap_or("unknown"));
+                let outgoing_tier = local_grant_tier(&perms_data, ip);
+                let incoming_tier = describe_remote_access_tier(
+                    remote_access.get(ip).and_then(|tier| tier.as_deref()),
+                );
 
-                // Find tier for this host from perms_data
-                let tier = perms_data.as_array()
-                    .and_then(|arr| arr.iter().find(|p| p["tailscaleIp"].as_str() == Some(ip)))
-                    .and_then(|p| p["tier"].as_str())
-                    .unwrap_or("no-access");
-
-                lines.push(format!("- {name} ({ip}): {hgpu}, {hram} [{hstatus}] — {tier}"));
+                lines.push(format!(
+                    "- {name} ({ip}): {hgpu}, {hram} [{hstatus}] — your access there: {incoming_tier}; its access here: {outgoing_tier}"
+                ));
             }
         }
 
@@ -244,27 +311,11 @@ impl ResourceBuilder {
             }
         }
 
-        // Permission notes
-        if let Some(perms) = perms_data.as_array() {
-            let restricted: Vec<String> = perms
-                .iter()
-                .filter(|p| p["tier"].as_str() != Some("full-access"))
-                .filter_map(|p| {
-                    let name = p["hostName"].as_str()?;
-                    let tier = p["tier"].as_str()?;
-                    Some(format!("  {name}: {tier}"))
-                })
-                .collect();
-
-            if !restricted.is_empty() {
-                lines.push("\nPermission restrictions:".to_string());
-                for line in restricted {
-                    lines.push(line);
-                }
-                lines.push("Peers with 'read-only' cannot create sessions or send input.".to_string());
-                lines.push("Peers with 'approval-required' will have write operations queued for owner approval.".to_string());
-            }
-        }
+        lines.push("\nPermission model:".to_string());
+        lines.push("  - 'your access there' is what the peer machine grants this machine.".to_string());
+        lines.push("  - 'its access here' is what this machine grants that peer.".to_string());
+        lines.push("  - To create sessions on a peer, your access there must be 'approval-required' or 'full-access'.".to_string());
+        lines.push("  - Changing this machine's permission for a peer does not upgrade what that peer allows this machine to do.".to_string());
 
         // Recent activity
         let outcomes_data: Value = match self.client()
@@ -340,15 +391,16 @@ impl ResourceBuilder {
             Ok(resp) => resp.json().await.unwrap_or(json!([])),
             Err(_) => json!([]),
         };
+        let remote_access = self.remote_access_tiers(&hosts_data).await;
 
         let mut peers = vec![];
         if let Some(hosts) = hosts_data["hosts"].as_array() {
             for h in hosts {
                 let ip = h["tailscaleIp"].as_str().unwrap_or("?");
-                let tier = perms_data.as_array()
-                    .and_then(|arr| arr.iter().find(|p| p["tailscaleIp"].as_str() == Some(ip)))
-                    .and_then(|p| p["tier"].as_str())
-                    .unwrap_or("no-access");
+                let your_access_tier = describe_remote_access_tier(
+                    remote_access.get(ip).and_then(|tier| tier.as_deref()),
+                );
+                let granted_by_local_tier = local_grant_tier(&perms_data, ip);
 
                 peers.push(json!({
                     "name": h["name"],
@@ -360,7 +412,9 @@ impl ResourceBuilder {
                         "hermes": h.get("capabilities").and_then(|c| c["hermes"].as_bool()).unwrap_or(false),
                         "ollama": h.get("capabilities").and_then(|c| c["ollama"].as_bool()).unwrap_or(false),
                     },
-                    "permissionTier": tier,
+                    "permissionTier": your_access_tier,
+                    "yourAccessTier": your_access_tier,
+                    "grantedByLocalTier": granted_by_local_tier,
                 }));
             }
         }
@@ -451,5 +505,34 @@ impl ResourceBuilder {
                 "mimeType": "application/json"
             }),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{describe_remote_access_tier, extract_requester_tier, local_grant_tier};
+    use serde_json::json;
+
+    #[test]
+    fn extracts_requester_tier_from_system_status_payload() {
+        let payload = json!({
+            "peer": {
+                "currentTier": "full-access"
+            }
+        });
+
+        assert_eq!(extract_requester_tier(&payload), Some("full-access"));
+    }
+
+    #[test]
+    fn local_grant_defaults_to_no_access_when_missing() {
+        let perms = json!([]);
+        assert_eq!(local_grant_tier(&perms, "100.87.33.75"), "no-access");
+    }
+
+    #[test]
+    fn unknown_remote_access_tier_is_described_honestly() {
+        assert_eq!(describe_remote_access_tier(None), "unknown");
+        assert_eq!(describe_remote_access_tier(Some("unexpected-tier")), "unknown");
     }
 }

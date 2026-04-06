@@ -554,6 +554,7 @@ function App() {
           connections={hostConnections}
           activeSessionBaseUrl={activeSessionBaseUrl}
           localHostName={localMachineInfo?.hostname ?? null}
+          localMachineIp={localMachineInfo?.tailscaleIp ?? null}
           sessions={allFlatSessions}
           localSessions={localSessions}
           activeSessionId={activeTerminalSessionId}

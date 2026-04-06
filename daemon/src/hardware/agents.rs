@@ -9,6 +9,8 @@ pub struct AgentInfo {
     pub agent_type: String,
     pub command: String,
     pub version: Option<String>,
+    #[serde(default)]
+    pub persistent: bool,
 }
 
 pub fn detect_agents() -> Vec<AgentInfo> {
@@ -22,6 +24,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             agent_type: "cli".into(),
             command: "claude".into(),
             version: Some(version),
+            persistent: true,
         });
     }
 
@@ -33,6 +36,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             agent_type: "cli".into(),
             command: "hermes".into(),
             version: None,
+            persistent: false,
         });
     }
 
@@ -44,6 +48,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             agent_type: "cli".into(),
             command: "aider".into(),
             version: Some(version),
+            persistent: false,
         });
     }
 
@@ -55,6 +60,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             agent_type: "cli".into(),
             command: "openclaw".into(),
             version: None,
+            persistent: false,
         });
     }
 
@@ -67,6 +73,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
                 agent_type: "api".into(),
                 command: format!("ollama run {model}"),
                 version: None,
+                persistent: false,
             });
         }
     }

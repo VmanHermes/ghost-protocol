@@ -237,6 +237,20 @@ fn tool_definitions() -> Value {
             "name": "ghost_list_agents",
             "description": "List available agent runtimes across the mesh. Shows which agents (Claude Code, Ollama models, Hermes, etc.) are available on which machines.",
             "inputSchema": { "type": "object", "properties": {}, "required": [] }
+        },
+        {
+            "name": "ghost_spawn_remote_session",
+            "description": "Spawn an agent session on a remote machine in the mesh. Creates a fire-and-forget chat session. Returns the session ID and status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "targetMachine": { "type": "string", "description": "Name or IP of the target machine" },
+                    "agentId": { "type": "string", "description": "Agent ID to spawn (e.g., 'claude-code', 'ollama:llama3')" },
+                    "task": { "type": "string", "description": "Task description / initial message for the agent" },
+                    "workdir": { "type": "string", "description": "Working directory on the remote machine" }
+                },
+                "required": ["targetMachine", "agentId", "task"]
+            }
         }
     ])
 }
@@ -275,6 +289,99 @@ async fn call_tool(
         "ghost_list_agents" => {
             let data = builder.available_agents().await?;
             Ok(serde_json::to_string_pretty(&data)?)
+        }
+        "ghost_spawn_remote_session" => {
+            let target_machine = arguments["targetMachine"].as_str().unwrap_or("").to_string();
+            let agent_id = arguments["agentId"].as_str().unwrap_or("").to_string();
+            let task = arguments["task"].as_str().unwrap_or("").to_string();
+            let workdir = arguments["workdir"].as_str().map(|s| s.to_string());
+
+            // Fetch known hosts from the local daemon
+            let client = builder.client();
+            let hosts_resp: Value = client
+                .get(format!("{}/api/hosts", builder.base()))
+                .send()
+                .await?
+                .json()
+                .await?;
+
+            let hosts = hosts_resp.as_array().cloned().unwrap_or_default();
+
+            // Find the target host by name or tailscaleIp or url
+            let host = hosts.iter().find(|h| {
+                h["name"].as_str() == Some(target_machine.as_str())
+                    || h["tailscaleIp"].as_str() == Some(target_machine.as_str())
+                    || h["url"].as_str() == Some(target_machine.as_str())
+            });
+
+            let host = match host {
+                Some(h) => h.clone(),
+                None => {
+                    let known: Vec<String> = hosts
+                        .iter()
+                        .filter_map(|h| h["name"].as_str().map(|s| s.to_string()))
+                        .collect();
+                    return Err(format!(
+                        "Machine '{}' not found. Known machines: [{}]",
+                        target_machine,
+                        known.join(", ")
+                    )
+                    .into());
+                }
+            };
+
+            let host_url = host["url"].as_str().unwrap_or("").to_string();
+            let host_name = host["name"].as_str().unwrap_or(&target_machine).to_string();
+
+            // POST to create a chat session on the remote machine
+            let mut session_body = json!({ "agentId": agent_id });
+            if let Some(ref wd) = workdir {
+                session_body["workdir"] = json!(wd);
+            }
+
+            let session_resp = client
+                .post(format!("{}/api/chat/sessions", host_url))
+                .json(&session_body)
+                .send()
+                .await
+                .map_err(|e| format!("failed to reach {host_name} ({host_url}): {e}"))?;
+
+            if !session_resp.status().is_success() {
+                let status = session_resp.status();
+                let text = session_resp.text().await.unwrap_or_default();
+                return Err(format!(
+                    "failed to create session on {host_name}: HTTP {status} — {text}"
+                )
+                .into());
+            }
+
+            let session: Value = session_resp.json().await?;
+            let session_id = session["id"].as_str().unwrap_or("?").to_string();
+
+            // Send the initial task message
+            let msg_resp = client
+                .post(format!("{}/api/chat/sessions/{}/message", host_url, session_id))
+                .json(&json!({ "content": task }))
+                .send()
+                .await
+                .map_err(|e| {
+                    format!(
+                        "session {session_id} created on {host_name} but failed to send task: {e}"
+                    )
+                })?;
+
+            if !msg_resp.status().is_success() {
+                let status = msg_resp.status();
+                let text = msg_resp.text().await.unwrap_or_default();
+                return Err(format!(
+                    "session {session_id} created on {host_name} but task message failed: HTTP {status} — {text}"
+                )
+                .into());
+            }
+
+            Ok(format!(
+                "Remote session spawned on {host_name}. session_id={session_id}, agent={agent_id}, status=running"
+            ))
         }
         _ => Err(format!("unknown tool: {name}").into()),
     }

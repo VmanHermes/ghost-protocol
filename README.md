@@ -56,9 +56,9 @@ Ghost Protocol is a multi-machine AI agent control plane built on Tailscale. Man
 
 ```bash
 # Download latest release
-curl -LO https://github.com/VmanHermes/ghost-protocol/releases/latest/download/ghost-protocol-0.2.1-linux-x86_64.tar.gz
-tar xzf ghost-protocol-0.2.1-linux-x86_64.tar.gz
-cd ghost-protocol-0.2.1
+curl -LO https://github.com/VmanHermes/ghost-protocol/releases/latest/download/ghost-protocol-0.2.2-linux-x86_64.tar.gz
+tar xzf ghost-protocol-0.2.2-linux-x86_64.tar.gz
+cd ghost-protocol-0.2.2
 
 # Install system-wide (installs ghost-protocol, ghost-protocol-daemon, ghost CLI)
 sudo ./install.sh

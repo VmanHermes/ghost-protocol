@@ -61,45 +61,75 @@ pub fn run() {
             detect::detect_tailscale_ip,
         ])
         .setup(|app| {
-            // Skip sidecar in dev mode or if explicitly disabled
-            if cfg!(debug_assertions) || std::env::var("GHOST_NO_SIDECAR").is_ok() {
-                eprintln!("[daemon] sidecar disabled (dev mode or GHOST_NO_SIDECAR set)");
+            // In dev builds, append "- Dev" to the window title
+            if cfg!(debug_assertions) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title("Ghost Protocol - Dev");
+                }
+            }
+
+            // Skip sidecar if explicitly disabled
+            if std::env::var("GHOST_NO_SIDECAR").is_ok() {
+                eprintln!("[daemon] sidecar disabled (GHOST_NO_SIDECAR set)");
                 return Ok(());
             }
 
-            // Try to spawn, but don't fail if it doesn't work
-            match app.shell().sidecar("binaries/ghost-protocol-daemon") {
-                Ok(sidecar) => {
-                    match sidecar.spawn() {
-                        Ok((mut rx, child)) => {
-                            app.manage(Mutex::new(Some(child)));
+            // Try bundled sidecar first, then fall back to system-installed daemon
+            let spawned = match app.shell().sidecar("binaries/ghost-protocol-daemon") {
+                Ok(sidecar) => match sidecar.spawn() {
+                    Ok(result) => {
+                        eprintln!("[daemon] started bundled sidecar");
+                        Some(result)
+                    }
+                    Err(e) => {
+                        eprintln!("[daemon] bundled sidecar failed: {e}, trying system PATH...");
+                        None
+                    }
+                },
+                Err(e) => {
+                    eprintln!("[daemon] sidecar not available: {e}, trying system PATH...");
+                    None
+                }
+            };
 
-                            // Log daemon output in background
-                            tauri::async_runtime::spawn(async move {
-                                use tauri_plugin_shell::process::CommandEvent;
-                                while let Some(event) = rx.recv().await {
-                                    match event {
-                                        CommandEvent::Stdout(line) => {
-                                            let line = String::from_utf8_lossy(&line);
-                                            eprintln!("[daemon stdout] {}", line);
-                                        }
-                                        CommandEvent::Stderr(line) => {
-                                            let line = String::from_utf8_lossy(&line);
-                                            eprintln!("[daemon stderr] {}", line);
-                                        }
-                                        CommandEvent::Terminated(status) => {
-                                            eprintln!("[daemon] exited: {:?}", status);
-                                            break;
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            });
-                        }
-                        Err(e) => eprintln!("[daemon] failed to spawn sidecar: {e}"),
+            // Fall back to system-installed ghost-protocol-daemon
+            let spawned = spawned.or_else(|| {
+                match app.shell().command("ghost-protocol-daemon").spawn() {
+                    Ok(result) => {
+                        eprintln!("[daemon] started system-installed daemon from PATH");
+                        Some(result)
+                    }
+                    Err(e) => {
+                        eprintln!("[daemon] system daemon also failed: {e}");
+                        None
                     }
                 }
-                Err(e) => eprintln!("[daemon] sidecar not available: {e}"),
+            });
+
+            if let Some((mut rx, child)) = spawned {
+                app.manage(Mutex::new(Some(child)));
+
+                // Log daemon output in background
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_shell::process::CommandEvent;
+                    while let Some(event) = rx.recv().await {
+                        match event {
+                            CommandEvent::Stdout(line) => {
+                                let line = String::from_utf8_lossy(&line);
+                                eprintln!("[daemon stdout] {}", line);
+                            }
+                            CommandEvent::Stderr(line) => {
+                                let line = String::from_utf8_lossy(&line);
+                                eprintln!("[daemon stderr] {}", line);
+                            }
+                            CommandEvent::Terminated(status) => {
+                                eprintln!("[daemon] exited: {:?}", status);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                });
             }
             Ok(())
         })

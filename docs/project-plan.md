@@ -4,7 +4,7 @@
 
 A unified control plane for AI agents across all your devices. Run terminals, chat with agents, and develop remotely on any machine in your Tailscale mesh. Agent-agnostic — works with Claude Code, Hermes, Ollama, and any runtime discoverable on the network.
 
-## Current status: v0.2.1
+## Current status: v0.2.2
 
 The desktop app and backend daemon are functional for multi-machine terminal sharing over Tailscale, with per-machine permissions, auto-discovery, and agent observability.
 
@@ -32,7 +32,6 @@ The desktop app and backend daemon are functional for multi-machine terminal sha
 
 ### Known issues
 
-- Chat/conversation UI exists but is not wired to working backend endpoints yet
 - Session exit detection (natural exit with exit code) not yet captured in outcome log — only create/terminate
 
 ---

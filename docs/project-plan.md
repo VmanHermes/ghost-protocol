@@ -184,6 +184,14 @@ Real-time view of all agents running across the mesh — what they're doing, res
 
 Ideas with potential but not yet prioritized. May be promoted to a phase when real usage patterns clarify their value.
 
+### Supervised agent delegation (promoted from fire-and-forget)
+
+- Upgrade from fire-and-forget delegation to supervised orchestration
+- Agent A spawns Agent B on a remote machine, stays in a loop: Agent B reports progress, Agent A reviews/approves/redirects
+- Agent A's context includes Agent B's output in real-time
+- Enables complex multi-machine workflows: "run tests on workstation, if they fail, fix on laptop"
+- Builds on the parent-child session model and `ghost_spawn_remote_session` MCP tool from Phase 3a
+
 ### Subagent tree reconstruction
 
 - Reconstruct agent delegation trees from run events

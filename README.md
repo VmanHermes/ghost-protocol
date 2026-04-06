@@ -228,8 +228,8 @@ cd desktop && npx tsc --noEmit
 # Run daemon tests
 cd daemon && cargo test
 
-# Build release package
-bash scripts/package-linux.sh
+# Prepare a release (sync version, run checks, build tarball)
+bash scripts/release.sh 0.2.2
 ```
 
 ## Docs

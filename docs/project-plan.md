@@ -27,7 +27,7 @@ The desktop app and backend daemon are functional for multi-machine terminal sha
 - **Log viewer** — unified client + server log stream with filtering and export
 - **Settings page** — permission management per host with tier dropdowns
 - **Right panel** — approval queue with approve/deny and countdown timers
-- **Packaged release** — `scripts/package-linux.sh` builds a redistributable tarball with install script
+- **Packaged release** — `scripts/release.sh <version>` syncs version metadata, runs focused checks, and builds a redistributable tarball with install script
 - **Wayland compatibility** — `.desktop` launcher includes WebKit/GDK workarounds
 
 ### Known issues

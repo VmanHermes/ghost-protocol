@@ -3,7 +3,7 @@ use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Marker extension: was the request from loopback?
 #[derive(Debug, Clone, Copy)]
@@ -143,7 +143,7 @@ where
             Ok(RequireReadOnly)
         } else {
             let ip = parts.extensions.get::<ClientIp>().map(|c| c.0.as_str()).unwrap_or("unknown");
-            warn!(ip, tier = tier.as_str(), required = "read-only", "permission denied");
+            debug!(ip, tier = tier.as_str(), required = "read-only", "permission denied");
             Err(forbidden_response("read-only tier required"))
         }
     }

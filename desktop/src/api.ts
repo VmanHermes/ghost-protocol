@@ -34,9 +34,26 @@ export async function api<T>(baseUrl: string, path: string, init?: RequestInit):
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+    throw new Error(parseApiError(text, res.status));
   }
   return res.json() as Promise<T>;
+}
+
+function parseApiError(text: string, status: number): string {
+  if (!text) return `Request failed: ${status}`;
+
+  try {
+    const data = JSON.parse(text) as { error?: string; message?: string };
+    if (data.error === "forbidden" && data.message) {
+      return `Permission denied: ${data.message}`;
+    }
+    if (data.message) return data.message;
+    if (typeof data.error === "string") return data.error;
+  } catch {
+    // Fall back to the raw body for non-JSON responses.
+  }
+
+  return text;
 }
 
 export type BackendLogEntry = {

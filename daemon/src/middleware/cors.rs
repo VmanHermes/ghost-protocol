@@ -33,6 +33,25 @@ fn apply_cors_headers(headers: &mut axum::http::HeaderMap, origin: HeaderValue) 
     );
     headers.insert(
         "access-control-allow-methods",
-        HeaderValue::from_static("GET, POST, OPTIONS"),
+        HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_cors_headers_allows_mutating_api_methods() {
+        let mut headers = axum::http::HeaderMap::new();
+        apply_cors_headers(&mut headers, HeaderValue::from_static("http://localhost:1420"));
+
+        let methods = headers
+            .get("access-control-allow-methods")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+
+        assert!(methods.contains("PUT"));
+        assert!(methods.contains("DELETE"));
+    }
 }

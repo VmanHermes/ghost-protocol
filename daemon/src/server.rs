@@ -90,6 +90,10 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                                 store.update_host_status(&host.id, "online", caps.as_ref()).ok();
                                 "online"
                             }
+                            Ok(resp) if resp.status() == reqwest::StatusCode::FORBIDDEN => {
+                                store.update_host_status(&host.id, "permission-required", None).ok();
+                                "permission-required"
+                            }
                             _ => {
                                 store.update_host_status(&host.id, "offline", None).ok();
                                 "offline"

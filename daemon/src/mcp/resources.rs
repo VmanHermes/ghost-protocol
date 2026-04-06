@@ -47,7 +47,18 @@ impl ResourceBuilder {
             .await?
             .json()
             .await?;
-        Ok(json!({ "hosts": resp }))
+        let discoveries = match self.client()
+            .get(format!("{}/api/discoveries", self.base()))
+            .send()
+            .await
+        {
+            Ok(resp) => resp.json().await.unwrap_or(json!([])),
+            Err(_) => json!([]),
+        };
+        Ok(json!({
+            "hosts": resp,
+            "discoveries": discoveries,
+        }))
     }
 
     pub async fn terminal_sessions(&self) -> Result<Value, Box<dyn std::error::Error>> {
@@ -165,7 +176,10 @@ impl ResourceBuilder {
                     .as_f64()
                     .map(|r| format!("{r:.0}GB RAM"))
                     .unwrap_or_else(|| "? RAM".to_string());
-                let hstatus = h["status"].as_str().unwrap_or("unknown");
+                let hstatus = match h["status"].as_str().unwrap_or("unknown") {
+                    "permission-required" => "reachable, but permission required",
+                    other => other,
+                };
 
                 // Find tier for this host from perms_data
                 let tier = perms_data.as_array()
@@ -174,6 +188,18 @@ impl ResourceBuilder {
                     .unwrap_or("no-access");
 
                 lines.push(format!("- {name} ({ip}): {hgpu}, {hram} [{hstatus}] — {tier}"));
+            }
+        }
+
+        if let Some(discoveries) = hosts_data["discoveries"].as_array() {
+            if !discoveries.is_empty() {
+                lines.push("\nPending discoveries:".to_string());
+                for peer in discoveries {
+                    let name = peer["name"].as_str().unwrap_or("?");
+                    let ip = peer["tailscaleIp"].as_str().unwrap_or("?");
+                    lines.push(format!("- {name} ({ip}) — discovered on the mesh but not added as a Ghost host yet"));
+                }
+                lines.push("Discovered peers appear in the sidebar with an Add button. Until they are added, they are not part of the Ghost host list and cannot be used for remote sessions.".to_string());
             }
         }
 
@@ -339,6 +365,18 @@ impl ResourceBuilder {
             }
         }
 
+        let mut discoveries = vec![];
+        if let Some(items) = hosts_data["discoveries"].as_array() {
+            for peer in items {
+                discoveries.push(json!({
+                    "name": peer["name"],
+                    "ip": peer["tailscaleIp"],
+                    "status": "discovered",
+                    "added": false,
+                }));
+            }
+        }
+
         Ok(json!({
             "local": {
                 "hostname": local_info["hostname"],
@@ -348,6 +386,7 @@ impl ResourceBuilder {
                 "gpu": local_info.get("gpu").and_then(|g| g.get("model")).unwrap_or(&json!(null)),
             },
             "peers": peers,
+            "discoveries": discoveries,
         }))
     }
 

@@ -122,7 +122,7 @@ export function Sidebar({
           <div key={peer.tailscaleIp} className="sidebar-discovery-card">
             <div className="sidebar-discovery-info">
               <span className="sidebar-discovery-name">{peer.name}</span>
-              <span className="sidebar-discovery-ip muted">{peer.tailscaleIp}</span>
+              <span className="sidebar-discovery-ip muted">Discovered on mesh · {peer.tailscaleIp}</span>
             </div>
             <div className="sidebar-discovery-actions">
               <button className="btn-discovery-add" onClick={() => onAcceptDiscovery(peer.tailscaleIp)}>Add</button>

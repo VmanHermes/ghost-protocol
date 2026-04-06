@@ -84,10 +84,12 @@ prepare_sidecars() {
   local bin_dir="$ROOT_DIR/desktop/src-tauri/binaries"
   mkdir -p "$bin_dir"
 
-  cp "$ROOT_DIR/daemon/target/release/ghost-protocol-daemon${ext}" \
+  # Install via install(1) which creates a new inode, avoiding "Text file busy"
+  # when an old sidecar binary is still running.
+  install -m 755 "$ROOT_DIR/daemon/target/release/ghost-protocol-daemon${ext}" \
      "$bin_dir/ghost-protocol-daemon-${triple}${ext}"
 
-  cp "$ROOT_DIR/cli/target/release/ghost${ext}" \
+  install -m 755 "$ROOT_DIR/cli/target/release/ghost${ext}" \
      "$bin_dir/ghost-${triple}${ext}"
 
   echo "    Sidecars placed in desktop/src-tauri/binaries/"

@@ -201,8 +201,7 @@ jobs:
           UNINSTALL
           chmod +x "$DIST/uninstall.sh"
 
-          cd dist
-          tar czf "ghost-protocol-${VERSION}-linux-x86_64.tar.gz" "ghost-protocol-${VERSION}"
+          tar -czf "dist/ghost-protocol-${VERSION}-linux-x86_64.tar.gz" -C dist "ghost-protocol-${VERSION}"
 
       - name: Upload Linux artifacts
         if: matrix.platform == 'linux'

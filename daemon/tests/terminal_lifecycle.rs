@@ -2,14 +2,37 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
-static NEXT_PORT: AtomicU16 = AtomicU16::new(18787);
+static NEXT_PORT: AtomicU16 = AtomicU16::new(0);
+
+fn next_port() -> u16 {
+    let seeded = NEXT_PORT.load(Ordering::SeqCst);
+    if seeded != 0 {
+        return NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    // Seed each test process into a different high port range so repeated cargo
+    // test runs are much less likely to collide with stale daemons from an
+    // earlier failed run.
+    let pid = std::process::id() as u16;
+    let base = 20_000 + (pid % 20_000);
+
+    match NEXT_PORT.compare_exchange(0, base + 1, Ordering::SeqCst, Ordering::SeqCst) {
+        Ok(_) => base,
+        Err(existing) => {
+            if existing == 0 {
+                unreachable!("NEXT_PORT should be initialized by compare_exchange");
+            }
+            NEXT_PORT.fetch_add(1, Ordering::SeqCst)
+        }
+    }
+}
 
 async fn with_daemon<F, Fut>(test: F)
 where
     F: FnOnce(String) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
-    let port = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+    let port = next_port();
     let base = format!("http://127.0.0.1:{port}");
     let temp_db = std::env::temp_dir().join(format!(
         "ghost_protocol_test_{}_{}.db",
@@ -36,7 +59,8 @@ where
     // Wait for daemon to be ready
     let client = reqwest::Client::new();
     let mut ready = false;
-    for _ in 0..30 {
+    // Give the daemon a bit more room on slower machines and under release-prep load.
+    for _ in 0..100 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if let Ok(resp) = client.get(format!("{base}/health")).send().await {
             if resp.status().is_success() {
@@ -45,13 +69,25 @@ where
             }
         }
     }
-    assert!(ready, "daemon did not become ready within 3 seconds");
+    if !ready {
+        let _ = child.kill().await;
+        let output = child
+            .wait_with_output()
+            .await
+            .expect("failed to collect daemon output after timeout");
+        panic!(
+            "daemon did not become ready within 10 seconds\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     // Run the test
     test(base).await;
 
     // Cleanup
     child.kill().await.ok();
+    let _ = child.wait().await;
     let _ = std::fs::remove_file(&temp_db);
     // Also remove WAL/SHM files that SQLite may create
     let _ = std::fs::remove_file(temp_db.with_extension("db-wal"));

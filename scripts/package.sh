@@ -105,7 +105,14 @@ prepare_pwa_resource() {
 build_tauri() {
   echo "==> Building Tauri app..."
   cd "$ROOT_DIR/desktop"
-  npx tauri build
+  if [[ -n "${GHOST_TAURI_BUNDLES:-}" ]]; then
+    echo "    Bundles: ${GHOST_TAURI_BUNDLES}"
+    npx tauri build --bundles "${GHOST_TAURI_BUNDLES}"
+  else
+    # The Arch tarball is assembled separately below, so avoid requiring
+    # optional platform bundlers like linuxdeploy for the default local flow.
+    npx tauri build --no-bundle
+  fi
 }
 
 build_arch_tarball() {
@@ -231,6 +238,9 @@ Options:
   --pwa-only    Build only the PWA (no Rust, no Tauri)
   --arch        Build everything and create an Arch Linux tarball
   --help        Show this help message
+
+Env:
+  GHOST_TAURI_BUNDLES  Override Tauri bundles, e.g. deb or deb,rpm
 
 Modes:
   Default       Build PWA, Rust binaries, sidecars, and Tauri app

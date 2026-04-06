@@ -11,12 +11,12 @@ Usage: ./scripts/release.sh <version> [--skip-checks] [--skip-package]
 Prepares a Ghost Protocol release by:
   1. Syncing the version across manifests/docs
   2. Running focused release checks
-  3. Building the Arch tarball release artifact
+  3. Building the release artifacts (.deb + Arch tarball)
   4. Printing the remaining git/GitHub release steps
 
 Examples:
-  ./scripts/release.sh 0.2.2
-  ./scripts/release.sh 0.2.2 --skip-package
+  ./scripts/release.sh 0.2.3
+  ./scripts/release.sh 0.2.3 --skip-package
 EOF
 }
 
@@ -77,7 +77,7 @@ if [[ "$SKIP_CHECKS" != true ]]; then
   echo "==> Running daemon tests..."
   (
     cd "$ROOT_DIR/daemon"
-    cargo test
+    cargo test --tests -- --test-threads=1
   )
 
   echo ""
@@ -90,11 +90,12 @@ fi
 
 if [[ "$SKIP_PACKAGE" != true ]]; then
   echo ""
-  echo "==> Building release package..."
-  bash "$ROOT_DIR/scripts/package.sh" --arch
+  echo "==> Building release artifacts..."
+  GHOST_TAURI_BUNDLES=deb bash "$ROOT_DIR/scripts/package.sh" --arch
 fi
 
 TARBALL_PATH="$ROOT_DIR/dist/ghost-protocol-${VERSION}-linux-x86_64.tar.gz"
+DEB_PATH="$ROOT_DIR/desktop/src-tauri/target/release/bundle/deb/Ghost Protocol_${VERSION}_amd64.deb"
 
 echo ""
 echo "==> Release ${VERSION} is prepared."
@@ -103,7 +104,7 @@ echo "Next steps:"
 echo "  1. Review the diff:"
 echo "     git diff --stat"
 echo "  2. Commit the release changes:"
-echo "     git add VERSION README.md docs/project-plan.md scripts/release.sh scripts/sync-version.sh scripts/version.sh daemon/Cargo.toml cli/Cargo.toml desktop/package.json desktop/package-lock.json desktop/src-tauri/Cargo.toml desktop/src-tauri/tauri.conf.json"
+echo "     git add VERSION README.md docs/project-plan.md scripts/release.sh scripts/sync-version.sh scripts/version.sh daemon/Cargo.toml cli/Cargo.toml desktop/package.json desktop/package-lock.json desktop/src-tauri/Cargo.toml desktop/src-tauri/tauri.conf.json desktop/src-tauri/.gitignore scripts/package.sh"
 echo "     git commit -m \"chore: release v${VERSION}\""
 echo "  3. Push the branch:"
 echo "     git push origin main"
@@ -113,6 +114,7 @@ echo "     git push origin v${VERSION}"
 echo "  5. Create the GitHub release and upload:"
 if [[ "$SKIP_PACKAGE" != true ]]; then
   echo "     ${TARBALL_PATH}"
+  echo "     ${DEB_PATH}"
 else
   echo "     Build artifact not created because --skip-package was used."
 fi

@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "ghost_protocol"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "portable-pty",
  "reqwest 0.12.28",

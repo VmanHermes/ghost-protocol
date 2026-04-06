@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 340" width="320" height="340">
+  <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Outer ghost outline -->
+    <path d="M124 42 L160 34 L196 42 L223 68 L238 92 L236 156 L250 216 L288 274 L264 280 L248 310 L216 300 L197 330 L160 330 L123 330 L104 300 L72 310 L56 280 L32 274 L70 216 L84 156 L82 92 L97 68 L124 42"/>
+
+    <!-- Top band -->
+    <path d="M110 56 L210 56"/>
+    <path d="M160 34 L160 56"/>
+
+    <!-- Upper mesh -->
+    <path d="M97 68 L127 123 L160 123 L193 123 L223 68"/>
+    <path d="M127 123 L160 156 L193 123"/>
+    <path d="M127 123 L193 123"/>
+    <path d="M160 123 L84 92"/>
+    <path d="M160 123 L236 92"/>
+    <path d="M82 92 L160 34"/>
+    <path d="M238 92 L160 34"/>
+
+    <!-- Mid section -->
+    <path d="M84 156 L236 156"/>
+    <path d="M82 92 L84 156"/>
+    <path d="M238 92 L236 156"/>
+    <path d="M84 156 L56 280"/>
+    <path d="M236 156 L264 280"/>
+    <path d="M84 156 L32 274"/>
+    <path d="M236 156 L288 274"/>
+
+    <!-- Lower verticals -->
+    <path d="M84 156 L84 156"/>
+    <path d="M127 156 L127 250"/>
+    <path d="M160 156 L160 250"/>
+    <path d="M193 156 L193 250"/>
+
+    <!-- Lower spread -->
+    <path d="M32 274 L127 250"/>
+    <path d="M288 274 L193 250"/>
+    <path d="M127 250 L104 300"/>
+    <path d="M127 250 L123 330"/>
+    <path d="M160 250 L123 330"/>
+    <path d="M160 250 L160 330"/>
+    <path d="M160 250 L197 330"/>
+    <path d="M193 250 L197 330"/>
+    <path d="M193 250 L216 300"/>
+    <path d="M72 310 L104 300"/>
+    <path d="M216 300 L248 310"/>
+
+    <!-- Side inner edges -->
+    <path d="M56 280 L104 300"/>
+    <path d="M264 280 L216 300"/>
+    <path d="M70 216 L127 250"/>
+    <path d="M250 216 L193 250"/>
+  </g>
+
+  <!-- Nodes -->
+  <g fill="#FFFFFF">
+    <circle cx="160" cy="56" r="7"/>
+    <circle cx="127" cy="123" r="7"/>
+    <circle cx="160" cy="156" r="7"/>
+    <circle cx="193" cy="123" r="7"/>
+    <circle cx="84" cy="156" r="12"/>
+    <circle cx="236" cy="156" r="12"/>
+    <circle cx="127" cy="250" r="9"/>
+    <circle cx="160" cy="250" r="10"/>
+    <circle cx="193" cy="250" r="9"/>
+    <circle cx="104" cy="300" r="8"/>
+    <circle cx="216" cy="300" r="8"/>
+    <circle cx="160" cy="123" r="8"/>
+  </g>
+</svg>

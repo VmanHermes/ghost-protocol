@@ -14,21 +14,11 @@ type Props = {
 
 const NAV_ITEMS: { view: MainView; label: string; icon: ReactNode }[] = [
   {
-    view: "terminal",
-    label: "Terminal",
+    view: "agents",
+    label: "Agents",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="4 17 10 11 4 5" />
-        <line x1="12" y1="19" x2="20" y2="19" />
-      </svg>
-    ),
-  },
-  {
-    view: "chat",
-    label: "Chat",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        <path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" />
       </svg>
     ),
   },

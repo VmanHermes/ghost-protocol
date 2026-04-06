@@ -17,10 +17,9 @@ import { PermissionsTab } from "./components/PermissionsTab";
 import "./App.css";
 
 import { ChatView } from "./components/ChatView";
+import { AgentsView } from "./components/AgentsView";
 
-// "chat" is kept in the union so Sidebar nav items still type-check,
-// but no panel renders for it until the Rust daemon adds chat support.
-type MainView = "chat" | "terminal" | "logs" | "settings";
+type MainView = "agents" | "chat" | "terminal" | "logs" | "settings";
 
 const LOCAL_DAEMON = "http://127.0.0.1:8787";
 
@@ -46,7 +45,7 @@ function App() {
   const [connections, setConnections] = useState<Map<string, HostConnection>>(new Map());
 
   // Shared state (unchanged)
-  const [mainView, setMainView] = useState<MainView>("terminal");
+  const [mainView, setMainView] = useState<MainView>("agents");
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null);
   const [localSessions, setLocalSessions] = useState<LocalTerminalSession[]>([]);
   const [, setActionError] = useState("");
@@ -361,6 +360,17 @@ function App() {
     return result;
   }, [hosts, connections]);
 
+  // Flat list of all remote sessions for AgentsView
+  const allFlatSessions: TerminalSession[] = useMemo(() => {
+    const result: TerminalSession[] = [];
+    connections.forEach((conn) => {
+      if (conn.sessions) {
+        result.push(...conn.sessions);
+      }
+    });
+    return result;
+  }, [connections]);
+
   return (
     <main className="shell">
       <Sidebar
@@ -375,6 +385,22 @@ function App() {
       />
 
       <section className="main-panel">
+        <AgentsView
+          daemonUrl={LOCAL_DAEMON}
+          sessions={allFlatSessions}
+          localSessions={localSessions}
+          visible={mainView === "agents"}
+          onCreateLocalSession={() => void handleCreateLocalSession()}
+          onRefreshSessions={() => {
+            hosts.forEach((h) => {
+              const conn = connections.get(h.id);
+              if (conn && conn.state === "connected") {
+                loadHostData(h.id, h.url);
+              }
+            });
+          }}
+        />
+
         <div style={{ display: mainView === "chat" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
           <ChatView daemonUrl={LOCAL_DAEMON} hosts={hosts} />
         </div>

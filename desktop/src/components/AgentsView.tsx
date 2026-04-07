@@ -16,6 +16,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { SessionHeader } from "./SessionHeader";
 import { ChatRenderer } from "./ChatRenderer";
 import { CodeServerPanel } from "./CodeServerPanel";
+import { PathAutocomplete } from "./PathAutocomplete";
 import { TerminalRenderer } from "./TerminalRenderer";
 import type {
   AgentInfo,
@@ -470,10 +471,10 @@ export function AgentsView({
 
         <label className="agents-launch-field agents-launch-field-grow">
           <span>Folder</span>
-          <input
-            type="text"
+          <PathAutocomplete
             value={launchWorkdir}
-            onChange={(e) => handleWorkdirChange(e.target.value)}
+            onChange={handleWorkdirChange}
+            baseUrl={launchDaemonUrl}
             placeholder={workdirPlaceholder}
           />
         </label>
@@ -531,10 +532,10 @@ export function AgentsView({
               <div style={{ fontSize: "0.88rem", fontWeight: 600, marginBottom: 8 }}>Start code-server</div>
               <label style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
                 Working directory
-                <input
-                  type="text"
+                <PathAutocomplete
                   value={codeServerWorkdir}
-                  onChange={(e) => setCodeServerWorkdir(e.target.value)}
+                  onChange={setCodeServerWorkdir}
+                  baseUrl={launchDaemonUrl}
                   style={{ width: "100%", marginTop: 4 }}
                   autoFocus
                 />

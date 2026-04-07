@@ -317,3 +317,13 @@ export async function adoptCodeServer(
     body: JSON.stringify({ pid }),
   });
 }
+
+export async function listDirs(
+  baseUrl: string,
+  path: string,
+): Promise<{ parent: string; dirs: string[] }> {
+  return api<{ parent: string; dirs: string[] }>(
+    baseUrl,
+    `/api/fs/list-dirs?path=${encodeURIComponent(path)}`,
+  );
+}

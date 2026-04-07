@@ -295,6 +295,7 @@ pub async fn run(
             "/api/system/hardware/status",
             get(http::system_hardware_status),
         )
+        .route("/api/fs/list-dirs", get(http::list_dirs))
         .route(
             "/api/terminal/sessions",
             get(http::list_sessions).post(http::create_session),

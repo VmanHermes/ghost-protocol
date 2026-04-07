@@ -123,9 +123,10 @@ fn build_ghost_mcp_config(bind_port: u16) -> Option<String> {
     }).to_string())
 }
 
-fn ghost_mcp_allowed_tools() -> Vec<String> {
+fn ghost_mcp_allowed_tools(tier: PeerTier) -> Vec<String> {
     let server_names = ["ghost-daemon", "ghost_daemon"];
     let tool_names = [
+        "ghost_recall",
         "ghost_report_outcome",
         "ghost_check_mesh",
         "ghost_list_machines",
@@ -133,14 +134,28 @@ fn ghost_mcp_allowed_tools() -> Vec<String> {
         "ghost_spawn_remote_session",
     ];
 
-    server_names
+    let mut tools: Vec<String> = server_names
         .into_iter()
         .flat_map(|server| {
             tool_names
                 .iter()
                 .map(move |tool| format!("mcp__{server}__{tool}"))
         })
-        .collect()
+        .collect();
+
+    // Only pre-approve standard Claude Code tools for full-access sessions
+    // (localhost or explicitly trusted peers). Approval-required peers keep
+    // agent-level tool prompts as an additional safety layer.
+    if tier == PeerTier::FullAccess {
+        let cc_tools = [
+            "Bash", "Read", "Write", "Edit", "Glob", "Grep",
+            "Agent", "TodoWrite", "WebFetch", "WebSearch",
+            "NotebookEdit", "NotebookRead",
+        ];
+        tools.extend(cc_tools.iter().map(|t| t.to_string()));
+    }
+
+    tools
 }
 
 fn build_chat_system_prompt(
@@ -256,6 +271,85 @@ pub async fn system_logs(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/fs/list-dirs
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ListDirsQuery {
+    #[serde(default)]
+    pub path: String,
+}
+
+pub async fn list_dirs(
+    _tier: RequireReadOnly,
+    Query(params): Query<ListDirsQuery>,
+) -> Json<serde_json::Value> {
+    let expanded = crate::workdir::expand_workdir(&params.path);
+    let expanded_path = std::path::Path::new(&expanded);
+
+    // Split into parent dir and prefix filter.
+    // If the path ends with '/' or is a directory, list its contents (no prefix filter).
+    // Otherwise, treat the last component as a prefix and list the parent.
+    let (parent, prefix) = if expanded_path.is_dir() {
+        (expanded.clone(), String::new())
+    } else {
+        let parent = expanded_path
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/".to_string());
+        let prefix = expanded_path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        (parent, prefix)
+    };
+
+    let prefix_lower = prefix.to_lowercase();
+
+    let mut dirs: Vec<String> = match std::fs::read_dir(&parent) {
+        Ok(entries) => entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                if !entry.path().is_dir() {
+                    return None;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !prefix_lower.is_empty() && !name.to_lowercase().starts_with(&prefix_lower) {
+                    return None;
+                }
+                // Skip hidden directories unless the user is explicitly typing a dot prefix
+                if name.starts_with('.') && !prefix.starts_with('.') {
+                    return None;
+                }
+                Some(name)
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    dirs.sort();
+    dirs.truncate(50);
+
+    // Reconstruct display paths using the original (unexpanded) parent.
+    // If the user typed "~/pro", suggestions should be "~/projects/", not "/home/user/projects/".
+    let display_parent = if expanded_path.is_dir() {
+        let p = params.path.trim();
+        if p.is_empty() { "~".to_string() } else { p.trim_end_matches('/').to_string() }
+    } else {
+        let p = params.path.trim();
+        match p.rfind('/') {
+            Some(idx) => p[..idx].to_string(),
+            None => "~".to_string(),
+        }
+    };
+
+    Json(serde_json::json!({
+        "parent": display_parent,
+        "dirs": dirs,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/terminal/sessions
 // ---------------------------------------------------------------------------
 
@@ -288,6 +382,7 @@ pub struct CreateWorkSessionBody {
 pub async fn create_work_session(
     _tier: RequireFullAccess,
     needs_approval: OptionalNeedsApproval,
+    current_peer_tier: CurrentPeerTier,
     client_ip: ClientIp,
     State(state): State<AppState>,
     Json(body): Json<CreateWorkSessionBody>,
@@ -319,6 +414,7 @@ pub async fn create_work_session(
         let (status, json) = create_chat_session(
             RequireFullAccess,
             needs_approval,
+            current_peer_tier,
             client_ip,
             State(state),
             Json(chat_body),
@@ -1755,6 +1851,7 @@ pub struct CreateChatSessionBody {
 async fn create_structured_chat_driver_session(
     state: &AppState,
     body: &CreateChatSessionBody,
+    tier: PeerTier,
 ) -> Result<(crate::store::sessions::TerminalSessionRecord, crate::hardware::agents::AgentInfo), String> {
     let agents = crate::hardware::agents::detect_agents();
     let agent = agents
@@ -1817,7 +1914,7 @@ async fn create_structured_chat_driver_session(
         None
     };
     let allowed_tools = if agent.id == "claude-code" || agent.id.starts_with("claude") {
-        ghost_mcp_allowed_tools()
+        ghost_mcp_allowed_tools(tier)
     } else {
         Vec::new()
     };
@@ -1917,6 +2014,7 @@ async fn reopen_session_record(
                     parent_session_id: session.parent_session_id.clone(),
                     root_session_id,
                 },
+                PeerTier::FullAccess,
             )
             .await?;
             Ok(replacement)
@@ -1943,6 +2041,7 @@ async fn reopen_session_record(
 pub async fn create_chat_session(
     _tier: RequireFullAccess,
     needs_approval: OptionalNeedsApproval,
+    CurrentPeerTier(current_tier): CurrentPeerTier,
     client_ip: ClientIp,
     State(state): State<AppState>,
     Json(body): Json<CreateChatSessionBody>,
@@ -1960,7 +2059,7 @@ pub async fn create_chat_session(
         }
     }
 
-    let (session, agent) = create_structured_chat_driver_session(&state, &body)
+    let (session, agent) = create_structured_chat_driver_session(&state, &body, current_tier)
         .await
         .map_err(|e| {
             if e.contains("agent '") {
@@ -2214,6 +2313,7 @@ pub async fn switch_session_mode(
                     parent_session_id: session.parent_session_id.clone(),
                     root_session_id: session.root_session_id.clone().or_else(|| Some(session.id.clone())),
                 },
+                PeerTier::FullAccess,
             )
             .await
             .map_err(|e| {

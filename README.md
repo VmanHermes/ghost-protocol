@@ -16,7 +16,9 @@ Ghost Protocol is a multi-machine AI agent control plane built on Tailscale. Man
 - **Permissions** — 4 tiers per machine: full-access, approval-required, read-only, no-access
 - **Approval flow** — write operations from guarded peers queue for your approval with 120s timeout
 - **Outcome log** — agents report work results, daemon auto-captures terminal lifecycle
-- **MCP tools** — `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines`, `ghost_list_agents`
+- **Intelligence layer** — embedded LLM-powered memory that learns from agent sessions (pre-session enrichment, post-session extraction, on-demand recall)
+- **Code-server** — start/stop/adopt VS Code in browser instances, detected automatically, managed alongside terminal sessions
+- **MCP tools** — `ghost_recall`, `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines`, `ghost_list_agents`
 - **Ghost CLI** — `ghost init`, `ghost status`, `ghost agents`, `ghost chat`, `ghost projects`
 - **Settings** — permission management per host with tier dropdowns
 
@@ -35,6 +37,7 @@ Ghost Protocol is a multi-machine AI agent control plane built on Tailscale. Man
 │  ├─ terminal sessions│                             │  ├─ terminal sessions│
 │  ├─ chat sessions    │                             │  ├─ chat sessions    │
 │  ├─ agent detection  │                             │  ├─ agent detection  │
+│  ├─ intelligence     │                             │  ├─ intelligence     │
 │  ├─ MCP server       │                             │  ├─ MCP server       │
 │  └─ SQLite store     │                             │  └─ SQLite store     │
 └──────────────────────┘                             └─────────────────���────┘
@@ -97,7 +100,7 @@ bash scripts/dev.sh
 # Or with a fresh database
 bash scripts/dev.sh --reset
 ```
-Build locally with : 
+Build locally with: 
 ./scripts/package.sh --arch
 
 Press `Ctrl+C` to stop all processes.
@@ -217,7 +220,7 @@ The daemon exposes an MCP server for AI agent integration:
 
 **Resources:** machine/info, machine/status, network/hosts, terminal/sessions, agent/hints, context/briefing, outcomes/recent, agents/available
 
-**Tools:** ghost_report_outcome, ghost_check_mesh, ghost_list_machines, ghost_list_agents
+**Tools:** ghost_recall, ghost_report_outcome, ghost_check_mesh, ghost_list_machines, ghost_list_agents, ghost_spawn_remote_session
 
 ## Configuration
 

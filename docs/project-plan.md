@@ -21,7 +21,8 @@ The desktop app and backend daemon are functional for multi-machine terminal sha
 - **Per-machine permissions** — 4 tiers (full-access, approval-required, read-only, no-access) enforced by daemon
 - **Approval flow** — write operations from approval-required peers queued for owner approval via desktop notification
 - **MCP resource server** — 7 read-only resources exposing machine info, sessions, hosts, outcomes, and context briefing
-- **MCP tools** — `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines` for active agent interaction
+- **MCP tools** — `ghost_recall`, `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines` for active agent interaction
+- **Intelligence layer** — embedded LLM-powered memory system: pre-session enrichment with lessons, post-session extraction, `ghost_recall` for on-demand retrieval
 - **Outcome log** — agents report work outcomes, daemon auto-captures terminal lifecycle, exposed via MCP
 - **CLI tools** — `status`, `sessions`, `hosts`, `info` subcommands with `--json` flag
 - **Log viewer** — unified client + server log stream with filtering and export
@@ -119,25 +120,40 @@ Full spec: `docs/superpowers/specs/2026-04-05-agent-discovery-design.md`
 - Terminal help text showing available ghost commands on open
 - Desktop ChatView revived with machine + agent picker
 
-### 3a-next: Embedded Intelligence Layer (high priority)
+### 3a-next: Embedded Intelligence Layer ✓
 
-**Design philosophy:** Ghost Protocol doesn't just connect you to agents — it orchestrates them using an agent of your choice as the intelligence layer.
+Full spec: `docs/superpowers/specs/2026-04-07-intelligence-layer-design.md`
 
-- User selects a "primary agent" per project (e.g., Claude via API key, local Ollama model)
-- Ghost Protocol uses this agent internally for: initial prompt generation, memory/RAG over outcomes + chat history, work routing decisions, behavioral oversight
-- API keys / model config stored in project manifest or user settings
-- The context briefing, outcome log, and MCP tools become the agent's working context
-- Enables: intelligent routing ("this build failed on laptop, try shared-host"), project-aware prompts, cross-session memory, skill/tool injection into agent sessions
-- Absorbs Distribution Advisor and Behavioral Oversight from Experimental into this unified concept
+**Design philosophy:** Ghost Protocol doesn't just connect you to agents — it orchestrates them using an agent of your choice as the intelligence layer. The system gets smarter over time.
 
-### 3b: Remote code-server (high priority)
+- Provider abstraction supporting API (Anthropic/OpenAI) and local Ollama backends
+- Hybrid memory — summarization for high-level recall, keyword search for specific retrieval
+- `memories` table with structured metadata JSON for filtering (agent, machine, intent, outcome, tags)
+- Pre-session enrichment (~200 tokens) with behavioral recall triggers ("When X, use ghost_recall to Y")
+- Post-session processing — LLM extracts memories, metadata, and lessons from session transcripts
+- `ghost_recall` MCP tool for on-demand memory retrieval with structured metadata filtering
+- All agent sessions (terminal + chat) processed, with smart filtering to skip trivial ones
+- Off by default — activates when user configures a provider; session data collected regardless
+- Backfill task processes historical sessions when intelligence layer is first enabled
+- Configuration at project level (`.ghost/config.json`) or daemon level (`intelligence.toml`)
+- API keys resolved from environment variables only — never stored in config files
+
+**Remaining refinements:**
+- sqlite-vec vector search (currently keyword fallback, structured metadata filtering is primary)
+- Memory deduplication during insertion (near-duplicate detection)
+- Provider retry/rate limiting on transient API failures
+
+### 3b: Remote code-server ✓
+
+Full spec: `docs/superpowers/specs/2026-04-06-remote-code-server-design.md`
 
 Run code-server (VS Code in browser) on machine A, access it from machine B via Ghost Protocol.
 
-- Daemon can start/stop code-server instances on the host machine
-- Sessions exposed in the desktop app alongside terminal sessions
-- Tunneled through Tailscale — no port forwarding or public exposure needed
+- Daemon can start/stop/adopt code-server instances on the host machine
+- Sessions exposed in the desktop app alongside terminal sessions with distinct icon
+- Background detection scan finds untracked code-server instances
 - code-server lifecycle managed like terminal sessions (create, monitor, terminate)
+- Tunneled through Tailscale — no port forwarding or public exposure needed
 
 ### 3c: Agent Observability (high priority)
 

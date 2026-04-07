@@ -33,6 +33,24 @@ function formatSessionOrigin(session: TerminalSession): string {
   return "local";
 }
 
+function isCodeServerSession(session: TerminalSession): boolean {
+  return session.driverKind === "code_server_driver";
+}
+
+function formatSessionLabel(session: TerminalSession): string {
+  if (isCodeServerSession(session)) {
+    return session.name ?? "code-server";
+  }
+  return session.name ?? "Shell";
+}
+
+function formatSessionSubtitle(session: TerminalSession): string {
+  if (isCodeServerSession(session)) {
+    return `code-server · ${session.workdir}`;
+  }
+  return session.workdir;
+}
+
 export function SessionSidebar({ activeSessions, previousSessions, activeSessionId, onSelectSession }: Props) {
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const dragging = useRef(false);
@@ -61,10 +79,13 @@ export function SessionSidebar({ activeSessions, previousSessions, activeSession
                 style={{ borderColor, marginLeft: indent }} onClick={() => onSelectSession(session.id)}>
                 <div className="session-card-header">
                   <span className="status-dot" style={{ background: STATUS_DOT_COLORS[session.status] }} />
-                  <span className="session-card-name">{session.name ?? "Shell"}</span>
+                  <span className="session-card-name">
+                    {isCodeServerSession(session) && <span style={{ marginRight: 4, fontSize: "0.85em" }}>{"</>"}</span>}
+                    {formatSessionLabel(session)}
+                  </span>
                   <span className="session-card-type">{formatSessionOrigin(session)}</span>
                 </div>
-                <div className="session-card-workdir">{session.workdir}</div>
+                <div className="session-card-workdir">{formatSessionSubtitle(session)}</div>
               </div>
             );
           })}
@@ -77,12 +98,15 @@ export function SessionSidebar({ activeSessions, previousSessions, activeSession
               <div key={session.id} className="session-card session-card-previous" onClick={() => onSelectSession(session.id)}>
                 <div className="session-card-header">
                   <span className="status-dot" style={{ background: "var(--text-muted)" }} />
-                  <span className="session-card-name">{session.name ?? "Shell"}</span>
+                  <span className="session-card-name">
+                    {isCodeServerSession(session) && <span style={{ marginRight: 4, fontSize: "0.85em" }}>{"</>"}</span>}
+                    {formatSessionLabel(session)}
+                  </span>
                   <span className="session-card-type">{formatSessionOrigin(session)}</span>
                 </div>
                 <div className="session-card-workdir">
                   {session.finishedAt ? `${formatRelativeTime(session.finishedAt)} · ` : ""}
-                  {session.workdir}
+                  {formatSessionSubtitle(session)}
                 </div>
               </div>
             ))}

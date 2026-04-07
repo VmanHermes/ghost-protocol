@@ -2623,6 +2623,209 @@ pub async fn promote_skill_candidate(
 }
 
 // ---------------------------------------------------------------------------
+// code-server body structs
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCodeServerBody {
+    pub workdir: String,
+    pub project_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AdoptCodeServerBody {
+    pub pid: u32,
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/code-server/sessions
+// ---------------------------------------------------------------------------
+
+pub async fn create_code_server_session(
+    _tier: RequireFullAccess,
+    State(state): State<AppState>,
+    Json(body): Json<CreateCodeServerBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let host_ip = crate::host::detect::get_tailscale_ip()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+
+    let (record, child) = crate::code_server::lifecycle::spawn_code_server(
+        &state.store,
+        &body.workdir,
+        body.project_id.as_deref(),
+        &host_ip,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
+
+    let session_id = record.id.clone();
+    let port = record.port.unwrap_or(8080) as u16;
+    let pid = child.id();
+    let store = state.store.clone();
+    let supervisor_tx = state.supervisor_tx.clone();
+
+    tokio::spawn(async move {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap_or_default();
+        let health_url = format!("http://127.0.0.1:{}/healthz", port);
+
+        // Phase 1: health-poll for up to 30s
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut ready = false;
+        while tokio::time::Instant::now() < deadline {
+            if client.get(&health_url).send().await.map(|r| r.status().is_success()).unwrap_or(false) {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        if !ready {
+            let _ = store.update_code_server_session(&session_id, "error", None, None);
+            return;
+        }
+
+        let url = {
+            store.get_terminal_session(&session_id)
+                .ok()
+                .flatten()
+                .and_then(|s| s.url)
+        };
+        let _ = store.update_code_server_session(
+            &session_id,
+            "running",
+            Some(pid as i64),
+            url.as_deref(),
+        );
+
+        let _ = supervisor_tx.send(crate::supervisor::SupervisorEvent {
+            event_type: "code_server_ready".to_string(),
+            session_id: Some(session_id.clone()),
+            contract_id: None,
+            ts: chrono::Utc::now().to_rfc3339(),
+            payload: serde_json::json!({ "pid": pid, "port": port }),
+        });
+
+        // Phase 2: monitor process via /proc/{pid}
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let proc_path = format!("/proc/{}", pid);
+            if !std::path::Path::new(&proc_path).exists() {
+                let _ = store.update_code_server_session(&session_id, "exited", None, None);
+                break;
+            }
+        }
+    });
+
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(record).unwrap_or_default())))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/code-server/sessions/{id}/terminate
+// ---------------------------------------------------------------------------
+
+pub async fn terminate_code_server_session(
+    _tier: RequireFullAccess,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    crate::code_server::lifecycle::terminate_code_server(&state.store, &id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({ "status": "terminated" })))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/code-server/detected
+// ---------------------------------------------------------------------------
+
+pub async fn list_detected_code_servers(
+    _tier: RequireReadOnly,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::code_server::CodeServerInfo>>, (StatusCode, Json<serde_json::Value>)> {
+    let tracked_pids: std::collections::HashSet<u32> = state
+        .store
+        .list_code_server_sessions()
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("db error: {e}") })),
+            )
+        })?
+        .into_iter()
+        .filter_map(|s| s.pid.map(|p| p as u32))
+        .collect();
+
+    let untracked = crate::code_server::lifecycle::scan_running_code_servers()
+        .into_iter()
+        .filter(|info| !tracked_pids.contains(&info.pid))
+        .collect();
+
+    Ok(Json(untracked))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/code-server/adopt
+// ---------------------------------------------------------------------------
+
+pub async fn adopt_code_server(
+    _tier: RequireFullAccess,
+    State(state): State<AppState>,
+    Json(body): Json<AdoptCodeServerBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let detected = crate::code_server::lifecycle::scan_running_code_servers();
+    let info = detected
+        .into_iter()
+        .find(|i| i.pid == body.pid)
+        .ok_or_else(|| {
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": format!("no running code-server with pid {}", body.pid) })),
+            )
+        })?;
+
+    let host_ip = crate::host::detect::get_tailscale_ip()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+
+    let record = crate::code_server::lifecycle::adopt_code_server(&state.store, &info, &host_ip)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+
+    let session_id = record.id.clone();
+    let pid = body.pid;
+    let store = state.store.clone();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let proc_path = format!("/proc/{}", pid);
+            if !std::path::Path::new(&proc_path).exists() {
+                let _ = store.update_code_server_session(&session_id, "exited", None, None);
+                break;
+            }
+        }
+    });
+
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(record).unwrap_or_default())))
+}
+
+// ---------------------------------------------------------------------------
 // PUT /api/approvals/{id}/deny  (localhost-only)
 // ---------------------------------------------------------------------------
 

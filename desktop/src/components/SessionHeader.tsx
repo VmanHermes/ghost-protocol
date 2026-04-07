@@ -99,7 +99,20 @@ export function SessionHeader({
             )}
           </div>
         )}
-        <button className="btn-secondary" disabled title="code-server coming soon" style={{ opacity: 0.4, fontSize: "0.78rem", padding: "4px 10px" }}>Open IDE</button>
+        {session.driverKind === "code_server_driver" && session.url && session.status === "running" ? (
+          <button
+            className="btn-secondary"
+            style={{ fontSize: "0.78rem", padding: "4px 10px" }}
+            onClick={async () => {
+              const { openUrl } = await import("@tauri-apps/plugin-opener");
+              await openUrl(session.url!);
+            }}
+          >
+            Open in Browser
+          </button>
+        ) : session.driverKind !== "code_server_driver" ? (
+          <button className="btn-secondary" disabled title="code-server coming soon" style={{ opacity: 0.4, fontSize: "0.78rem", padding: "4px 10px" }}>Open IDE</button>
+        ) : null}
         {isLive ? (
           <button className="btn-secondary" onClick={onEndSession} style={{ fontSize: "0.78rem", padding: "4px 10px" }}>End Session</button>
         ) : (

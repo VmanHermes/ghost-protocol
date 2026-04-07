@@ -114,8 +114,18 @@ export type TerminalSession = {
   hostId?: string | null;
   hostName?: string | null;
   agentId?: string | null;
-  driverKind?: "terminal_driver" | "structured_chat_driver" | "api_driver" | "ide_driver";
+  driverKind?: "terminal_driver" | "structured_chat_driver" | "api_driver" | "ide_driver" | "code_server_driver";
   capabilities?: string[];
+  sessionType?: string;
+  port?: number | null;
+  url?: string | null;
+  adopted?: boolean;
+};
+
+export type CodeServerInfo = {
+  pid: number;
+  port: number;
+  workdir: string;
 };
 
 export type TerminalChunk = {

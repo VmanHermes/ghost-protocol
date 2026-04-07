@@ -10,6 +10,7 @@ import type {
   MachineStatus,
   TerminalSession,
   WorkSessionViews,
+  CodeServerInfo,
 } from "./types";
 
 export function wsUrlFromHttp(baseUrl: string) {
@@ -255,5 +256,45 @@ export async function reopenWorkSession(
 ): Promise<TerminalSession> {
   return api(daemonUrl, `/api/work-sessions/${sessionId}/reopen`, {
     method: "POST",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// code-server
+// ---------------------------------------------------------------------------
+
+export async function createCodeServerSession(
+  daemonUrl: string,
+  workdir: string,
+  projectId?: string,
+): Promise<TerminalSession> {
+  return api<TerminalSession>(daemonUrl, "/api/code-server/sessions", {
+    method: "POST",
+    body: JSON.stringify({ workdir, projectId }),
+  });
+}
+
+export async function terminateCodeServerSession(
+  daemonUrl: string,
+  sessionId: string,
+): Promise<{ status: string }> {
+  return api(daemonUrl, `/api/code-server/sessions/${sessionId}/terminate`, {
+    method: "POST",
+  });
+}
+
+export async function listDetectedCodeServers(
+  daemonUrl: string,
+): Promise<CodeServerInfo[]> {
+  return api<CodeServerInfo[]>(daemonUrl, "/api/code-server/detected");
+}
+
+export async function adoptCodeServer(
+  daemonUrl: string,
+  pid: number,
+): Promise<TerminalSession> {
+  return api<TerminalSession>(daemonUrl, "/api/code-server/adopt", {
+    method: "POST",
+    body: JSON.stringify({ pid }),
   });
 }

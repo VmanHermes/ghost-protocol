@@ -233,7 +233,15 @@ After inserting new memories, the top 3 by importance (across all memories with 
 Processing is skipped if:
 - Session lasted under 10 seconds
 - Session produced fewer than 5 terminal chunks
-- Intelligence layer is disabled in config
+- Intelligence layer is disabled in config (but session data is still collected by existing systems)
+
+### Backfill on first enable
+
+When the intelligence layer is enabled for the first time (or re-enabled after being off), the processor runs a background backfill task:
+- Queries sessions that have no corresponding entries in `memories`
+- Processes them through the same pipeline (collect → extract → store → rank)
+- Rate-limited to avoid overwhelming the LLM provider (e.g., 1 session per 5 seconds)
+- Skips sessions that meet the skip conditions above
 
 ---
 
@@ -345,7 +353,9 @@ API keys resolved from well-known env vars only. No key fields in the file.
 
 ### Resolution order
 
-Project config → daemon config → disabled. If neither specifies intelligence config, the layer is off. Sessions run exactly as they do today with no degradation.
+Project config → daemon config → disabled. The intelligence layer is **off by default** — it only activates when the user explicitly configures a provider and model. This is fine: the daemon continues to collect all session data (terminal chunks, chat messages, outcomes) regardless of whether the intelligence layer is enabled. This data is already captured by existing systems.
+
+When the user later enables the intelligence layer, a **backfill task** runs on first startup: it processes historical sessions that were never post-processed, extracting memories and embeddings from the existing data. This means no data is lost by starting without the intelligence layer — users can turn it on whenever they're ready and immediately benefit from all prior session history.
 
 ### Embedding dimension handling
 

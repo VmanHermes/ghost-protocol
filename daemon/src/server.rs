@@ -253,6 +253,21 @@ pub async fn run(
         });
     }
 
+    // Intelligence backfill (runs once on startup if intelligence layer is enabled)
+    {
+        let store = store.clone();
+        tokio::spawn(async move {
+            // Small delay to let daemon finish startup
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+            let config = crate::intelligence::config::IntelligenceConfig::resolve(None);
+            if config.is_active() {
+                tracing::info!("intelligence layer enabled, checking for backfill");
+                crate::intelligence::backfill::run_backfill(store, config).await;
+            }
+        });
+    }
+
     // 7. Build app state
     let state = AppState {
         store,

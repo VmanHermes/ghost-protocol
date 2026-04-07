@@ -1,5 +1,6 @@
 mod chat;
 mod code_server;
+mod intelligence;
 mod cli;
 mod config;
 mod mcp;

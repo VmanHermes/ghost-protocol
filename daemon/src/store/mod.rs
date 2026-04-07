@@ -26,6 +26,7 @@ const MIGRATIONS_SLICE: &[M<'static>] = &[
     M::up(include_str!("../../migrations/008_session_delegation.sql")),
     M::up(include_str!("../../migrations/009_supervisor_core.sql")),
     M::up(include_str!("../../migrations/010_code_server.sql")),
+    M::up(include_str!("../../migrations/011_intelligence.sql")),
 ];
 
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);

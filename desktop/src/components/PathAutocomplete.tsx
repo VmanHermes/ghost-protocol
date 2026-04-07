@@ -15,21 +15,24 @@ export function PathAutocomplete({ value, onChange, baseUrl, placeholder, autoFo
   const [displayParent, setDisplayParent] = useState("");
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const requestIdRef = useRef(0);
 
   const fetchSuggestions = useCallback(
     (path: string) => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(async () => {
+        const id = ++requestIdRef.current;
         try {
           const result = await listDirs(baseUrl, path);
+          if (id !== requestIdRef.current) return;
           setSuggestions(result.dirs);
           setDisplayParent(result.parent);
           setHighlightIndex(-1);
           setOpen(result.dirs.length > 0);
         } catch {
+          if (id !== requestIdRef.current) return;
           setSuggestions([]);
           setOpen(false);
         }
@@ -55,7 +58,8 @@ export function PathAutocomplete({ value, onChange, baseUrl, placeholder, autoFo
 
   const selectSuggestion = useCallback(
     (dir: string) => {
-      const fullPath = displayParent ? `${displayParent}/${dir}/` : `${dir}/`;
+      const parent = displayParent.replace(/\/+$/, "");
+      const fullPath = parent ? `${parent}/${dir}/` : `${dir}/`;
       onChange(fullPath);
       setOpen(false);
       fetchSuggestions(fullPath);
@@ -90,13 +94,13 @@ export function PathAutocomplete({ value, onChange, baseUrl, placeholder, autoFo
     blurTimeoutRef.current = setTimeout(() => setOpen(false), 200);
   }, []);
 
-  const handleFocus = useCallback(() => {
+  const handleFocus = () => {
     if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
     if (value) fetchSuggestions(value);
-  }, [value, fetchSuggestions]);
+  };
 
   return (
-    <div className="path-autocomplete" ref={wrapperRef}>
+    <div className="path-autocomplete">
       <input
         type="text"
         value={value}

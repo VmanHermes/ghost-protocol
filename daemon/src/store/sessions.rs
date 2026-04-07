@@ -28,6 +28,9 @@ pub struct TerminalSessionRecord {
     pub agent_id: Option<String>,
     pub driver_kind: String,
     pub capabilities: Vec<String>,
+    pub port: Option<i64>,
+    pub url: Option<String>,
+    pub adopted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +57,9 @@ pub struct WorkSessionRecord {
     pub last_chunk_at: Option<String>,
     pub pid: Option<i64>,
     pub exit_code: Option<i32>,
+    pub port: Option<i64>,
+    pub url: Option<String>,
+    pub adopted: bool,
 }
 
 pub struct CreateWorkSessionParams<'a> {
@@ -71,6 +77,9 @@ pub struct CreateWorkSessionParams<'a> {
     pub agent_id: Option<&'a str>,
     pub driver_kind: &'a str,
     pub capabilities: &'a [String],
+    pub port: Option<i64>,
+    pub url: Option<&'a str>,
+    pub adopted: bool,
 }
 
 impl TerminalSessionRecord {
@@ -97,6 +106,9 @@ impl TerminalSessionRecord {
             last_chunk_at: self.last_chunk_at.clone(),
             pid: self.pid,
             exit_code: self.exit_code,
+            port: self.port,
+            url: self.url.clone(),
+            adopted: self.adopted,
         }
     }
 }
@@ -114,9 +126,9 @@ impl Store {
             "INSERT INTO terminal_sessions (
                 id, mode, status, name, workdir, command_json, created_at, session_type,
                 project_id, parent_session_id, root_session_id, host_id, host_name, agent_id,
-                driver_kind, capabilities_json
+                driver_kind, capabilities_json, port, url, adopted
              )
-             VALUES (?1, ?2, 'created', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, 'created', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 input.id,
                 input.mode,
@@ -133,6 +145,9 @@ impl Store {
                 input.agent_id,
                 input.driver_kind,
                 capabilities_json,
+                input.port,
+                input.url,
+                input.adopted,
             ],
         )?;
 
@@ -158,6 +173,9 @@ impl Store {
             agent_id: input.agent_id.map(|s| s.to_string()),
             driver_kind: input.driver_kind.to_string(),
             capabilities: input.capabilities.to_vec(),
+            port: input.port,
+            url: input.url.map(|s| s.to_string()),
+            adopted: input.adopted,
         })
     }
 
@@ -191,6 +209,9 @@ impl Store {
             agent_id: None,
             driver_kind: crate::supervisor::DRIVER_TERMINAL,
             capabilities: &capabilities,
+            port: None,
+            url: None,
+            adopted: false,
         })
     }
 
@@ -257,6 +278,22 @@ impl Store {
         Ok(())
     }
 
+    pub fn update_code_server_session(
+        &self,
+        session_id: &str,
+        status: &str,
+        pid: Option<i64>,
+        url: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        let conn = self.conn();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE terminal_sessions SET status = ?1, pid = ?2, url = ?3, started_at = COALESCE(started_at, ?4) WHERE id = ?5",
+            params![status, pid, url, now, session_id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_terminal_session(
         &self,
         session_id: &str,
@@ -266,7 +303,8 @@ impl Store {
             "SELECT id, mode, status, name, workdir, command_json, created_at,
                     started_at, finished_at, last_chunk_at, pid, exit_code,
                     session_type, project_id, parent_session_id, host_id, host_name,
-                    root_session_id, agent_id, driver_kind, capabilities_json
+                    root_session_id, agent_id, driver_kind, capabilities_json,
+                    port, url, adopted
              FROM terminal_sessions WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![session_id], |row| {
@@ -298,6 +336,9 @@ impl Store {
                 agent_id: row.get(18)?,
                 driver_kind: row.get(19)?,
                 capabilities,
+                port: row.get(21)?,
+                url: row.get(22)?,
+                adopted: row.get::<_, i64>(23).unwrap_or(0) != 0,
             })
         })?;
         match rows.next() {
@@ -314,7 +355,8 @@ impl Store {
             "SELECT id, mode, status, name, workdir, command_json, created_at,
                     started_at, finished_at, last_chunk_at, pid, exit_code,
                     session_type, project_id, parent_session_id, host_id, host_name,
-                    root_session_id, agent_id, driver_kind, capabilities_json
+                    root_session_id, agent_id, driver_kind, capabilities_json,
+                    port, url, adopted
              FROM terminal_sessions ORDER BY created_at DESC, id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -346,6 +388,56 @@ impl Store {
                 agent_id: row.get(18)?,
                 driver_kind: row.get(19)?,
                 capabilities,
+                port: row.get(21)?,
+                url: row.get(22)?,
+                adopted: row.get::<_, i64>(23).unwrap_or(0) != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn list_code_server_sessions(
+        &self,
+    ) -> Result<Vec<TerminalSessionRecord>, rusqlite::Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, mode, status, name, workdir, command_json, created_at,
+                    started_at, finished_at, last_chunk_at, pid, exit_code,
+                    session_type, project_id, parent_session_id, host_id, host_name,
+                    root_session_id, agent_id, driver_kind, capabilities_json,
+                    port, url, adopted
+             FROM terminal_sessions WHERE session_type = 'code_server' ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let command_json: String = row.get(5)?;
+            let command: Vec<String> = serde_json::from_str(&command_json).unwrap_or_default();
+            let capabilities_json: String = row.get(20)?;
+            let capabilities: Vec<String> = serde_json::from_str(&capabilities_json).unwrap_or_default();
+            Ok(TerminalSessionRecord {
+                id: row.get(0)?,
+                mode: row.get(1)?,
+                status: row.get(2)?,
+                name: row.get(3)?,
+                workdir: row.get(4)?,
+                command,
+                created_at: row.get(6)?,
+                started_at: row.get(7)?,
+                finished_at: row.get(8)?,
+                last_chunk_at: row.get(9)?,
+                pid: row.get(10)?,
+                exit_code: row.get(11)?,
+                session_type: row.get(12)?,
+                project_id: row.get(13)?,
+                parent_session_id: row.get(14)?,
+                host_id: row.get(15)?,
+                host_name: row.get(16)?,
+                root_session_id: row.get(17)?,
+                agent_id: row.get(18)?,
+                driver_kind: row.get(19)?,
+                capabilities,
+                port: row.get(21)?,
+                url: row.get(22)?,
+                adopted: row.get::<_, i64>(23).unwrap_or(0) != 0,
             })
         })?;
         rows.collect()
@@ -448,5 +540,58 @@ mod tests {
         assert_eq!(s2.status, "terminated");
         let s3 = store.get_terminal_session("t3").unwrap().unwrap();
         assert_eq!(s3.status, "exited");
+    }
+
+    #[test]
+    fn test_create_code_server_session() {
+        let store = test_store();
+        let caps = vec!["supports_browser_view".to_string(), "supports_code_server".to_string()];
+        let rec = store
+            .create_work_session(super::CreateWorkSessionParams {
+                id: "cs1",
+                mode: "project",
+                name: Some("code-server"),
+                workdir: "/home/user/projects/foo",
+                command: &["code-server".to_string()],
+                session_type: "code_server",
+                project_id: None,
+                parent_session_id: None,
+                root_session_id: None,
+                host_id: None,
+                host_name: None,
+                agent_id: None,
+                driver_kind: "code_server_driver",
+                capabilities: &caps,
+                port: Some(8400),
+                url: Some("http://100.87.33.75:8400/?folder=/home/user/projects/foo"),
+                adopted: false,
+            })
+            .unwrap();
+        assert_eq!(rec.session_type, "code_server");
+        assert_eq!(rec.port, Some(8400));
+        assert_eq!(rec.url.as_deref(), Some("http://100.87.33.75:8400/?folder=/home/user/projects/foo"));
+        assert!(!rec.adopted);
+
+        let fetched = store.get_terminal_session("cs1").unwrap().unwrap();
+        assert_eq!(fetched.port, Some(8400));
+        assert_eq!(fetched.driver_kind, "code_server_driver");
+    }
+
+    #[test]
+    fn test_list_code_server_sessions() {
+        let store = test_store();
+        let caps = vec!["supports_browser_view".to_string()];
+        store.create_work_session(super::CreateWorkSessionParams {
+            id: "cs1", mode: "project", name: Some("cs"), workdir: "/tmp",
+            command: &[], session_type: "code_server", project_id: None,
+            parent_session_id: None, root_session_id: None, host_id: None,
+            host_name: None, agent_id: None, driver_kind: "code_server_driver",
+            capabilities: &caps, port: Some(8400), url: None, adopted: false,
+        }).unwrap();
+        store.create_terminal_session("t1", "terminal", None, "/tmp", &["bash".to_string()], "terminal", None).unwrap();
+
+        let cs_sessions = store.list_code_server_sessions().unwrap();
+        assert_eq!(cs_sessions.len(), 1);
+        assert_eq!(cs_sessions[0].id, "cs1");
     }
 }

@@ -94,6 +94,9 @@ impl TerminalManager {
                 agent_id: options.agent_id.as_deref(),
                 driver_kind: &driver_kind,
                 capabilities: &capabilities,
+                port: None,
+                url: None,
+                adopted: false,
             })
             .map_err(|e| format!("db error creating session: {e}"))?;
 

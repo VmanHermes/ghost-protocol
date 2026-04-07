@@ -1796,6 +1796,9 @@ async fn create_structured_chat_driver_session(
             agent_id: Some(&body.agent_id),
             driver_kind,
             capabilities: &capabilities,
+            port: None,
+            url: None,
+            adopted: false,
         })
         .map_err(|e| format!("db error: {e}"))?;
 

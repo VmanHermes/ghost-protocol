@@ -251,6 +251,32 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["targetMachine", "agentId", "task"]
             }
+        },
+        {
+            "name": "ghost_recall",
+            "description": "Search project memory and history. Use before starting unfamiliar work, after hitting errors, or when deciding which machine to use.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language question or keyword search"
+                    },
+                    "filters": {
+                        "type": "object",
+                        "properties": {
+                            "project": { "type": "string" },
+                            "agent": { "type": "string" },
+                            "machine": { "type": "string" },
+                            "outcome": { "type": "string", "enum": ["success", "failed", "partial_success"] },
+                            "category": { "type": "string", "enum": ["summary", "insight", "error_pattern", "preference", "machine_knowledge"] },
+                            "tags": { "type": "array", "items": { "type": "string" } }
+                        }
+                    },
+                    "limit": { "type": "integer", "default": 5, "maximum": 10 }
+                },
+                "required": []
+            }
         }
     ])
 }
@@ -382,6 +408,21 @@ async fn call_tool(
             Ok(format!(
                 "Remote session spawned on {host_name}. session_id={session_id}, agent={agent_id}, status=running"
             ))
+        }
+        "ghost_recall" => {
+            let client = builder.client();
+            let resp = client
+                .post(format!("{}/api/intelligence/recall", builder.base()))
+                .json(arguments)
+                .send()
+                .await?;
+            if resp.status().is_success() {
+                let body: serde_json::Value = resp.json().await?;
+                Ok(serde_json::to_string_pretty(&body)?)
+            } else {
+                let text = resp.text().await?;
+                Err(format!("recall failed: {text}").into())
+            }
         }
         _ => Err(format!("unknown tool: {name}").into()),
     }

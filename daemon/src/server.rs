@@ -387,6 +387,7 @@ pub async fn run(
             get(http::list_detected_code_servers),
         )
         .route("/api/code-server/adopt", post(http::adopt_code_server))
+        .route("/api/intelligence/recall", post(http::recall_memories))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
         .layer(middleware::from_fn_with_state(

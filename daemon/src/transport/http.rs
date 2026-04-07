@@ -2873,3 +2873,23 @@ pub async fn deny_approval(
             )
         })
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/intelligence/recall
+// ---------------------------------------------------------------------------
+
+pub async fn recall_memories(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl axum::response::IntoResponse {
+    let query: crate::intelligence::retrieval::RecallQuery =
+        serde_json::from_value(body).unwrap_or_else(|_| {
+            crate::intelligence::retrieval::RecallQuery {
+                query: None,
+                filters: None,
+                limit: 5,
+            }
+        });
+    let result = crate::intelligence::retrieval::recall(&state.store, &query, None);
+    axum::Json(result)
+}

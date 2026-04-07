@@ -5,6 +5,7 @@ pub const DRIVER_TERMINAL: &str = "terminal_driver";
 pub const DRIVER_STRUCTURED_CHAT: &str = "structured_chat_driver";
 pub const DRIVER_API: &str = "api_driver";
 pub const DRIVER_IDE: &str = "ide_driver";
+pub const DRIVER_CODE_SERVER: &str = "code_server_driver";
 
 pub const CAP_CHAT_VIEW: &str = "supports_chat_view";
 pub const CAP_TERMINAL_VIEW: &str = "supports_terminal_view";
@@ -13,6 +14,8 @@ pub const CAP_SAFE_MODE_SWITCH: &str = "supports_safe_mode_switch";
 pub const CAP_STRUCTURED_EVENTS: &str = "supports_structured_events";
 pub const CAP_DELEGATION: &str = "supports_delegation";
 pub const CAP_MAILBOX: &str = "supports_mailbox";
+pub const CAP_BROWSER_VIEW: &str = "supports_browser_view";
+pub const CAP_CODE_SERVER: &str = "supports_code_server";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +127,7 @@ pub fn driver_capabilities(driver_kind: &str, persistent: bool, agent_present: b
             CAP_MAILBOX,
         ],
         DRIVER_IDE => vec![CAP_RESUME],
+        DRIVER_CODE_SERVER => vec![CAP_BROWSER_VIEW, CAP_CODE_SERVER],
         _ => vec![CAP_TERMINAL_VIEW, CAP_RESUME],
     };
 

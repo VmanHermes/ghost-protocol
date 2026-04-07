@@ -1,4 +1,5 @@
 mod chat;
+mod code_server;
 mod cli;
 mod config;
 mod mcp;

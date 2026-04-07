@@ -369,13 +369,14 @@ impl ResourceBuilder {
 
         // Tool instructions
         lines.push("\nAvailable Ghost Protocol tools:".to_string());
+        lines.push("  - ghost_recall: Search project memory and history for relevant context before starting work".to_string());
         lines.push("  - ghost_report_outcome: Report what you did and the result after completing work".to_string());
         lines.push("  - ghost_check_mesh: Check current mesh state (machines, sessions, activity)".to_string());
         lines.push("  - ghost_list_machines: Get machine capabilities and permissions for routing decisions".to_string());
         lines.push("".to_string());
-        lines.push("After completing significant work (builds, deployments, inference, file operations),".to_string());
-        lines.push("use ghost_report_outcome to log the result. This helps the mesh learn which machines".to_string());
-        lines.push("are best for which tasks.".to_string());
+        lines.push("Before starting unfamiliar work, use ghost_recall to check for relevant history.".to_string());
+        lines.push("After completing significant work, use ghost_report_outcome to log the result.".to_string());
+        lines.push("This helps the mesh learn from experience.".to_string());
 
         Ok(lines.join("\n"))
     }

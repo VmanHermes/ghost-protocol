@@ -88,7 +88,7 @@ impl ChatProcessManager {
         }
     }
 
-    fn try_enrich(&self, session_id: &str, workdir: &str) -> Option<String> {
+    fn try_enrich(&self, _session_id: &str, workdir: &str) -> Option<String> {
         use crate::intelligence::config::IntelligenceConfig;
         use crate::intelligence::enricher::{enrich_session, ProjectCommands};
 

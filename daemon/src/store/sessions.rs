@@ -594,4 +594,51 @@ mod tests {
         assert_eq!(cs_sessions.len(), 1);
         assert_eq!(cs_sessions[0].id, "cs1");
     }
+
+    #[test]
+    fn test_code_server_session_lifecycle() {
+        let store = test_store();
+        let caps = vec!["supports_browser_view".to_string(), "supports_code_server".to_string()];
+
+        // 1. Create code-server session
+        let rec = store.create_work_session(super::CreateWorkSessionParams {
+            id: "cs-lifecycle",
+            mode: "project",
+            name: Some("code-server · myproject"),
+            workdir: "/home/user/projects/myproject",
+            command: &["code-server".to_string(), "--bind-addr".to_string(), "0.0.0.0:8400".to_string()],
+            session_type: "code_server",
+            project_id: None,
+            parent_session_id: None,
+            root_session_id: None,
+            host_id: None,
+            host_name: None,
+            agent_id: None,
+            driver_kind: "code_server_driver",
+            capabilities: &caps,
+            port: Some(8400),
+            url: Some("http://100.87.33.75:8400/?folder=/home/user/projects/myproject"),
+            adopted: false,
+        }).unwrap();
+        assert_eq!(rec.status, "created");
+
+        // 2. Update to running
+        store.update_code_server_session("cs-lifecycle", "running", Some(12345), None).unwrap();
+        let fetched = store.get_terminal_session("cs-lifecycle").unwrap().unwrap();
+        assert_eq!(fetched.status, "running");
+        assert_eq!(fetched.pid, Some(12345));
+
+        // 3. List code-server sessions (should appear)
+        let cs_list = store.list_code_server_sessions().unwrap();
+        assert!(cs_list.iter().any(|s| s.id == "cs-lifecycle"));
+
+        // 4. List all sessions (should also appear)
+        let all = store.list_terminal_sessions().unwrap();
+        assert!(all.iter().any(|s| s.id == "cs-lifecycle" && s.session_type == "code_server"));
+
+        // 5. Terminate
+        store.update_terminal_session("cs-lifecycle", Some("terminated"), None, Some("2026-04-06T12:00:00Z"), None, None, None).unwrap();
+        let terminated = store.get_terminal_session("cs-lifecycle").unwrap().unwrap();
+        assert_eq!(terminated.status, "terminated");
+    }
 }

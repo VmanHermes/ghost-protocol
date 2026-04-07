@@ -58,11 +58,29 @@ function parseApiError(text: string, status: number): string {
 }
 
 export type BackendLogEntry = {
-  ts: string;
+  ts: string | null;
   level: string;
   logger: string;
   message: string;
 };
+
+type RawBackendLogEntry = {
+  ts?: string | null;
+  timestamp?: string | null;
+  level?: string | null;
+  logger?: string | null;
+  source?: string | null;
+  message?: string | null;
+};
+
+function normalizeBackendLogEntry(entry: RawBackendLogEntry): BackendLogEntry {
+  return {
+    ts: entry.ts ?? entry.timestamp ?? null,
+    level: entry.level ?? "INFO",
+    logger: entry.logger ?? entry.source ?? "server",
+    message: entry.message ?? "",
+  };
+}
 
 export type ApiHost = {
   id: string;
@@ -177,7 +195,8 @@ export async function listSystemLogs(
   daemonUrl: string,
   limit = 300,
 ): Promise<BackendLogEntry[]> {
-  return api<BackendLogEntry[]>(daemonUrl, `/api/system/logs?limit=${limit}`);
+  const entries = await api<RawBackendLogEntry[]>(daemonUrl, `/api/system/logs?limit=${limit}`);
+  return entries.map(normalizeBackendLogEntry);
 }
 
 export async function listProjects(daemonUrl: string): Promise<ProjectRecord[]> {

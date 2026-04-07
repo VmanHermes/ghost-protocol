@@ -17,7 +17,10 @@ use crate::terminal::manager::TerminalManager;
 use crate::transport::http::{self, AppState};
 use crate::transport::ws;
 
-pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(
+    settings: Settings,
+    log_buffer: LogBuffer,
+) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Open store
     info!(db_path = %settings.db_path.display(), "opening store");
     let store = Store::open(&settings.db_path)?;
@@ -33,6 +36,12 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
 
     // Recover code-server sessions
     {
+        let recovered_code_servers = crate::code_server::lifecycle::scan_running_code_servers();
+        let recovered_adopted_pids: std::collections::HashSet<i64> = recovered_code_servers
+            .iter()
+            .map(|info| info.pid as i64)
+            .collect();
+
         if let Ok(cs_sessions) = store.list_code_server_sessions() {
             for session in cs_sessions {
                 if session.status != "running" && session.status != "created" {
@@ -41,7 +50,9 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                 if session.adopted {
                     if let Some(pid) = session.pid {
                         let proc_path = format!("/proc/{pid}");
-                        if std::path::Path::new(&proc_path).exists() {
+                        if std::path::Path::new(&proc_path).exists()
+                            && recovered_adopted_pids.contains(&pid)
+                        {
                             tracing::info!(session_id = %session.id, pid, "recovered adopted code-server session");
                             let store2 = store.clone();
                             let sid = session.id.clone();
@@ -51,27 +62,68 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                                     let proc_path = format!("/proc/{pid}");
                                     if !std::path::Path::new(&proc_path).exists() {
                                         let now = chrono::Utc::now().to_rfc3339();
-                                        store2.update_terminal_session(&sid, Some("exited"), None, Some(&now), None, None, None).ok();
+                                        store2
+                                            .update_terminal_session(
+                                                &sid,
+                                                Some("exited"),
+                                                None,
+                                                Some(&now),
+                                                None,
+                                                None,
+                                                None,
+                                            )
+                                            .ok();
                                         break;
                                     }
                                 }
                             });
                         } else {
-                            store.update_terminal_session(&session.id, Some("exited"), None, Some(&chrono::Utc::now().to_rfc3339()), None, None, None).ok();
+                            store
+                                .update_terminal_session(
+                                    &session.id,
+                                    Some("exited"),
+                                    None,
+                                    Some(&chrono::Utc::now().to_rfc3339()),
+                                    None,
+                                    None,
+                                    None,
+                                )
+                                .ok();
                         }
                     } else {
-                        store.update_terminal_session(&session.id, Some("exited"), None, Some(&chrono::Utc::now().to_rfc3339()), None, None, None).ok();
+                        store
+                            .update_terminal_session(
+                                &session.id,
+                                Some("exited"),
+                                None,
+                                Some(&chrono::Utc::now().to_rfc3339()),
+                                None,
+                                None,
+                                None,
+                            )
+                            .ok();
                     }
                 } else {
                     // Spawned sessions: process is gone after daemon restart
-                    store.update_terminal_session(&session.id, Some("exited"), None, Some(&chrono::Utc::now().to_rfc3339()), None, None, None).ok();
+                    store
+                        .update_terminal_session(
+                            &session.id,
+                            Some("exited"),
+                            None,
+                            Some(&chrono::Utc::now().to_rfc3339()),
+                            None,
+                            None,
+                            None,
+                        )
+                        .ok();
                 }
             }
         }
     }
 
     // Create supervisor broadcast channel before background task so it can be shared
-    let (supervisor_tx, _supervisor_rx) = tokio::sync::broadcast::channel::<crate::supervisor::SupervisorEvent>(256);
+    let (supervisor_tx, _supervisor_rx) =
+        tokio::sync::broadcast::channel::<crate::supervisor::SupervisorEvent>(256);
 
     // 5. Start background host health poller + discovery
     {
@@ -94,11 +146,7 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                     if store.is_known_or_dismissed(&peer.ip).unwrap_or(true) {
                         continue;
                     }
-                    let already_discovered = store
-                        .get_discovery(&peer.ip)
-                        .ok()
-                        .flatten()
-                        .is_some();
+                    let already_discovered = store.get_discovery(&peer.ip).ok().flatten().is_some();
                     let health_url = format!("http://{}:8787/health", peer.ip);
                     match client.get(&health_url).send().await {
                         Ok(resp) if resp.status().is_success() => {
@@ -119,9 +167,13 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                         let new_status = match client.get(&url).send().await {
                             Ok(resp) if resp.status().is_success() => {
                                 let caps = resp.json::<serde_json::Value>().await.ok().map(|v| {
-                                    let agents_data: Option<Vec<crate::hardware::agents::AgentInfo>> = v["tools"]["agents"]
-                                        .as_array()
-                                        .map(|arr| arr.iter().filter_map(|a| serde_json::from_value(a.clone()).ok()).collect());
+                                    let agents_data: Option<
+                                        Vec<crate::hardware::agents::AgentInfo>,
+                                    > = v["tools"]["agents"].as_array().map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|a| serde_json::from_value(a.clone()).ok())
+                                            .collect()
+                                    });
                                     crate::store::hosts::HostCapabilities {
                                         gpu: v["gpu"]["model"].as_str().map(|s| s.to_string()),
                                         ram_gb: v["ramGb"].as_f64(),
@@ -130,11 +182,15 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                                         agents: agents_data,
                                     }
                                 });
-                                store.update_host_status(&host.id, "online", caps.as_ref()).ok();
+                                store
+                                    .update_host_status(&host.id, "online", caps.as_ref())
+                                    .ok();
                                 "online"
                             }
                             Ok(resp) if resp.status() == reqwest::StatusCode::FORBIDDEN => {
-                                store.update_host_status(&host.id, "permission-required", None).ok();
+                                store
+                                    .update_host_status(&host.id, "permission-required", None)
+                                    .ok();
                                 "permission-required"
                             }
                             _ => {
@@ -165,7 +221,10 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                         .collect();
 
                     if !untracked.is_empty() {
-                        tracing::info!(count = untracked.len(), "detected untracked code-server instances");
+                        tracing::info!(
+                            count = untracked.len(),
+                            "detected untracked code-server instances"
+                        );
                         let _ = supervisor_tx_bg.send(crate::supervisor::SupervisorEvent {
                             event_type: "code_server_detected".to_string(),
                             session_id: None,
@@ -217,21 +276,30 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         .route("/api/system/status", get(http::system_status))
         .route("/api/system/logs", get(http::system_logs))
         .route("/api/system/hardware", get(http::system_hardware))
-        .route("/api/system/hardware/status", get(http::system_hardware_status))
+        .route(
+            "/api/system/hardware/status",
+            get(http::system_hardware_status),
+        )
         .route(
             "/api/terminal/sessions",
             get(http::list_sessions).post(http::create_session),
         )
         .route("/api/work-sessions", post(http::create_work_session))
         .route("/api/work-sessions/{id}", get(http::get_work_session))
-        .route("/api/work-sessions/{id}/views", get(http::get_work_session_views))
-        .route("/api/work-sessions/{id}/companion-terminal", post(http::create_companion_terminal))
-        .route("/api/work-sessions/{id}/reopen", post(http::reopen_work_session))
-        .route("/api/terminal/sessions/{id}", get(http::get_session))
         .route(
-            "/api/terminal/sessions/{id}/input",
-            post(http::send_input),
+            "/api/work-sessions/{id}/views",
+            get(http::get_work_session_views),
         )
+        .route(
+            "/api/work-sessions/{id}/companion-terminal",
+            post(http::create_companion_terminal),
+        )
+        .route(
+            "/api/work-sessions/{id}/reopen",
+            post(http::reopen_work_session),
+        )
+        .route("/api/terminal/sessions/{id}", get(http::get_session))
+        .route("/api/terminal/sessions/{id}/input", post(http::send_input))
         .route(
             "/api/terminal/sessions/{id}/resize",
             post(http::resize_session),
@@ -244,34 +312,87 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         .route("/api/hosts/{id}", axum::routing::delete(http::remove_host))
         .route("/ws", get(ws::ws_upgrade))
         .route("/api/permissions", get(http::list_permissions))
-        .route("/api/hosts/{id}/permissions", axum::routing::put(http::set_permission))
+        .route(
+            "/api/hosts/{id}/permissions",
+            axum::routing::put(http::set_permission),
+        )
         .route("/api/approvals", get(http::list_approvals))
         .route("/api/approvals/{id}", get(http::get_approval))
-        .route("/api/approvals/{id}/approve", axum::routing::put(http::approve_approval))
-        .route("/api/approvals/{id}/deny", axum::routing::put(http::deny_approval))
+        .route(
+            "/api/approvals/{id}/approve",
+            axum::routing::put(http::approve_approval),
+        )
+        .route(
+            "/api/approvals/{id}/deny",
+            axum::routing::put(http::deny_approval),
+        )
         .route("/api/discoveries", get(http::list_discoveries))
-        .route("/api/discoveries/{ip}/accept", axum::routing::put(http::accept_discovery))
-        .route("/api/discoveries/{ip}/dismiss", axum::routing::put(http::dismiss_discovery))
-        .route("/api/outcomes", get(http::list_outcomes).post(http::create_outcome))
-        .route("/api/projects", get(http::list_projects).post(http::create_project))
-        .route("/api/projects/{id}", get(http::get_project).put(http::update_project).delete(http::remove_project))
+        .route(
+            "/api/discoveries/{ip}/accept",
+            axum::routing::put(http::accept_discovery),
+        )
+        .route(
+            "/api/discoveries/{ip}/dismiss",
+            axum::routing::put(http::dismiss_discovery),
+        )
+        .route(
+            "/api/outcomes",
+            get(http::list_outcomes).post(http::create_outcome),
+        )
+        .route(
+            "/api/projects",
+            get(http::list_projects).post(http::create_project),
+        )
+        .route(
+            "/api/projects/{id}",
+            get(http::get_project)
+                .put(http::update_project)
+                .delete(http::remove_project),
+        )
         .route("/api/agents", get(http::list_agents))
         .route("/api/chat/sessions", post(http::create_chat_session))
-        .route("/api/chat/sessions/{id}/messages", get(http::list_chat_messages))
-        .route("/api/chat/sessions/{id}/message", post(http::send_chat_message))
-        .route("/api/sessions/{id}/switch-mode", post(http::switch_session_mode))
+        .route(
+            "/api/chat/sessions/{id}/messages",
+            get(http::list_chat_messages),
+        )
+        .route(
+            "/api/chat/sessions/{id}/message",
+            post(http::send_chat_message),
+        )
+        .route(
+            "/api/sessions/{id}/switch-mode",
+            post(http::switch_session_mode),
+        )
         .route("/api/delegations", post(http::create_delegation))
         .route("/api/delegations/{id}", get(http::get_delegation))
-        .route("/api/delegations/{id}/messages", get(http::list_delegation_messages).post(http::create_delegation_message))
+        .route(
+            "/api/delegations/{id}/messages",
+            get(http::list_delegation_messages).post(http::create_delegation_message),
+        )
         .route("/api/skills/candidates", get(http::list_skill_candidates))
-        .route("/api/skills/candidates/{id}/promote", post(http::promote_skill_candidate))
-        .route("/api/code-server/sessions", post(http::create_code_server_session))
-        .route("/api/code-server/sessions/{id}/terminate", post(http::terminate_code_server_session))
-        .route("/api/code-server/detected", get(http::list_detected_code_servers))
+        .route(
+            "/api/skills/candidates/{id}/promote",
+            post(http::promote_skill_candidate),
+        )
+        .route(
+            "/api/code-server/sessions",
+            post(http::create_code_server_session),
+        )
+        .route(
+            "/api/code-server/sessions/{id}/terminate",
+            post(http::terminate_code_server_session),
+        )
+        .route(
+            "/api/code-server/detected",
+            get(http::list_detected_code_servers),
+        )
         .route("/api/code-server/adopt", post(http::adopt_code_server))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))
-        .layer(middleware::from_fn_with_state(store_for_guard, tailscale_guard))
+        .layer(middleware::from_fn_with_state(
+            store_for_guard,
+            tailscale_guard,
+        ))
         .layer(Extension(Arc::new(settings.clone())));
 
     let app = {
@@ -291,8 +412,7 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         if let Some(web_path) = web_dir {
             info!(path = %web_path.display(), "serving PWA frontend");
             app.fallback_service(
-                ServeDir::new(&web_path)
-                    .fallback(ServeFile::new(web_path.join("index.html")))
+                ServeDir::new(&web_path).fallback(ServeFile::new(web_path.join("index.html"))),
             )
         } else {
             app

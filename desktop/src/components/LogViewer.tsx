@@ -54,7 +54,7 @@ export function LogViewer({ baseUrl }: Props) {
   }, [clientLogs, serverLogs, autoScroll]);
 
   const merged = (() => {
-    const items: { ts: string; level: string; source: string; message: string; origin: "client" | "server" }[] = [];
+    const items: { ts: string | null; level: string; source: string; message: string; origin: "client" | "server" }[] = [];
     if (filter !== "server") {
       for (const e of clientLogs) {
         items.push({ ts: e.ts, level: e.level, source: e.source, message: e.message, origin: "client" });
@@ -65,7 +65,7 @@ export function LogViewer({ baseUrl }: Props) {
         items.push({ ts: e.ts, level: e.level.toLowerCase(), source: e.logger, message: e.message, origin: "server" });
       }
     }
-    items.sort((a, b) => a.ts.localeCompare(b.ts));
+    items.sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? ""));
     if (levelFilter !== "all") {
       return items.filter((e) => e.level === levelFilter);
     }
@@ -73,7 +73,9 @@ export function LogViewer({ baseUrl }: Props) {
   })();
 
   function handleExport() {
-    const text = merged.map((e) => `${e.ts} [${e.origin}] [${e.level.toUpperCase()}] ${e.source}: ${e.message}`).join("\n");
+    const text = merged
+      .map((e) => `${e.ts ?? "unknown"} [${e.origin}] [${e.level.toUpperCase()}] ${e.source}: ${e.message}`)
+      .join("\n");
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -109,7 +111,7 @@ export function LogViewer({ baseUrl }: Props) {
         {merged.length === 0 ? <div className="empty-state">No log entries</div> : null}
         {merged.map((entry, i) => (
           <div key={i} className="log-entry">
-            <span className="log-ts">{entry.ts.slice(11, 23)}</span>
+            <span className="log-ts">{entry.ts ? entry.ts.slice(11, 23) : "unknown"}</span>
             <span className="log-origin">{entry.origin === "server" ? "S" : "C"}</span>
             <span className="log-level" style={{ color: LEVEL_COLORS[entry.level as LogLevel] ?? "#94a3b8" }}>
               {entry.level.slice(0, 4).toUpperCase()}

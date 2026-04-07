@@ -97,6 +97,8 @@ bash scripts/dev.sh
 # Or with a fresh database
 bash scripts/dev.sh --reset
 ```
+Build locally with : 
+./scripts/package.sh --arch
 
 Press `Ctrl+C` to stop all processes.
 

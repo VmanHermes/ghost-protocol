@@ -13,30 +13,70 @@ use crate::supervisor::{self, DRIVER_CODE_SERVER};
 
 /// Returns the last path component (filename/dirname) of a path string.
 pub fn short_path(path: &str) -> &str {
-    path.trim_end_matches('/').rsplit('/').next().unwrap_or(path)
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
 }
 
 /// Extracts the port number from a `--bind-addr` argument list.
 /// Handles both `--bind-addr host:port` (two separate args) and
 /// `--bind-addr=host:port` (single arg with `=`).
 pub fn extract_port(args: &[&str]) -> Option<u16> {
+    extract_bind_addr(args).map(|(_, port)| port)
+}
+
+fn extract_bind_host(args: &[&str]) -> Option<String> {
+    extract_bind_addr(args).map(|(host, _)| host)
+}
+
+fn extract_bind_addr(args: &[&str]) -> Option<(String, u16)> {
     let mut iter = args.iter().peekable();
     while let Some(&arg) = iter.next() {
         if arg == "--bind-addr" {
             if let Some(&next) = iter.peek() {
-                return parse_host_port(next);
+                return parse_bind_addr(next);
             }
         } else if let Some(rest) = arg.strip_prefix("--bind-addr=") {
-            return parse_host_port(rest);
+            return parse_bind_addr(rest);
         }
     }
     None
 }
 
-fn parse_host_port(s: &str) -> Option<u16> {
-    // format: host:port  — take everything after the last ':'
-    let port_str = s.rsplit(':').next()?;
-    port_str.parse::<u16>().ok()
+fn parse_bind_addr(s: &str) -> Option<(String, u16)> {
+    if let Some(rest) = s.strip_prefix('[') {
+        let end = rest.find(']')?;
+        let host = &rest[..end];
+        let port = rest[end + 1..].strip_prefix(':')?.parse::<u16>().ok()?;
+        return Some((host.to_string(), port));
+    }
+
+    let idx = s.rfind(':')?;
+    let host = &s[..idx];
+    let port = s[idx + 1..].parse::<u16>().ok()?;
+    Some((host.to_string(), port))
+}
+
+fn is_localhost_bind_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+fn is_launcher_entry(args: &[&str], index: usize, arg: &str) -> bool {
+    if index == 0 {
+        return true;
+    }
+
+    if index == 1 {
+        let launcher = args.first().copied().unwrap_or_default();
+        let launcher_name = launcher.rsplit('/').next().unwrap_or(launcher);
+        let looks_like_node = launcher_name == "node" || launcher_name == "nodejs";
+        if looks_like_node && arg.contains("code-server") {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Extracts the working directory from an argument list.
@@ -57,9 +97,12 @@ pub fn extract_workdir(args: &[&str]) -> Option<String> {
     // Positional: last non-flag arg starting with '/'
     let mut workdir: Option<String> = None;
     let mut skip_next = false;
-    for &arg in args {
+    for (index, &arg) in args.iter().enumerate() {
         if skip_next {
             skip_next = false;
+            continue;
+        }
+        if is_launcher_entry(args, index, arg) {
             continue;
         }
         // flags that consume their following arg
@@ -128,6 +171,15 @@ pub fn scan_running_code_servers() -> Vec<CodeServerInfo> {
         }
 
         let args: Vec<&str> = parts.iter().map(|s| s.as_ref()).collect();
+        let bind_host = extract_bind_host(&args);
+
+        if bind_host
+            .as_deref()
+            .map(is_localhost_bind_host)
+            .unwrap_or(true)
+        {
+            continue;
+        }
 
         let port = extract_port(&args).unwrap_or(8080);
 
@@ -159,6 +211,7 @@ pub fn spawn_code_server(
     project_id: Option<&str>,
     host_ip: &str,
 ) -> Result<(TerminalSessionRecord, Child), String> {
+    let workdir = crate::workdir::expand_workdir(workdir);
     let port = find_available_port().ok_or("no available port in range 8400-8499")?;
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -170,17 +223,17 @@ pub fn spawn_code_server(
         bind_addr.clone(),
         "--auth".to_string(),
         "none".to_string(),
-        workdir.to_string(),
+        workdir.clone(),
     ];
     let url = format!("http://{}:{}/?folder={}", host_ip, port, workdir);
-    let name = short_path(workdir);
+    let name = short_path(&workdir);
 
     let record = store
         .create_work_session(CreateWorkSessionParams {
             id: &id,
             mode: "project",
             name: Some(name),
-            workdir,
+            workdir: &workdir,
             command: &command,
             session_type: "code_server",
             project_id,
@@ -202,7 +255,7 @@ pub fn spawn_code_server(
         .arg(&bind_addr)
         .arg("--auth")
         .arg("none")
-        .arg(workdir)
+        .arg(&workdir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -313,7 +366,13 @@ mod tests {
 
     #[test]
     fn test_extract_port_flag() {
-        let args = vec!["node", "/usr/bin/code-server", "--bind-addr", "0.0.0.0:8443", "/home/user"];
+        let args = vec![
+            "node",
+            "/usr/bin/code-server",
+            "--bind-addr",
+            "0.0.0.0:8443",
+            "/home/user",
+        ];
         assert_eq!(extract_port(&args), Some(8443));
     }
 
@@ -331,8 +390,18 @@ mod tests {
 
     #[test]
     fn test_extract_workdir_positional() {
-        let args = vec!["node", "/usr/bin/code-server", "--bind-addr", "0.0.0.0:8443", "/home/user/projects/foo", ""];
-        assert_eq!(extract_workdir(&args), Some("/home/user/projects/foo".to_string()));
+        let args = vec![
+            "node",
+            "/usr/bin/code-server",
+            "--bind-addr",
+            "0.0.0.0:8443",
+            "/home/user/projects/foo",
+            "",
+        ];
+        assert_eq!(
+            extract_workdir(&args),
+            Some("/home/user/projects/foo".to_string())
+        );
     }
 
     #[test]
@@ -345,6 +414,31 @@ mod tests {
     fn test_extract_workdir_none() {
         let args = vec!["code-server", "--auth", "none", ""];
         assert_eq!(extract_workdir(&args), None);
+    }
+
+    #[test]
+    fn test_extract_workdir_ignores_launcher_entry() {
+        let args = vec![
+            "node",
+            "/usr/lib/code-server/out/node/entry",
+            "--bind-addr",
+            "0.0.0.0:8080",
+            "--auth",
+            "none",
+        ];
+        assert_eq!(extract_workdir(&args), None);
+    }
+
+    #[test]
+    fn test_extract_bind_host_flag() {
+        let args = vec!["code-server", "--bind-addr", "0.0.0.0:8443", "/home/user"];
+        assert_eq!(extract_bind_host(&args).as_deref(), Some("0.0.0.0"));
+    }
+
+    #[test]
+    fn test_extract_bind_host_equals() {
+        let args = vec!["code-server", "--bind-addr=127.0.0.1:9000"];
+        assert_eq!(extract_bind_host(&args).as_deref(), Some("127.0.0.1"));
     }
 
     #[test]

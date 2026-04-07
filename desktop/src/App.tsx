@@ -567,12 +567,11 @@ function App() {
           onLocalSessionStatusChange={handleLocalSessionStatusChange}
           onRefreshSessions={refreshAllSessions}
         />
-
-
-
-        <div style={{ display: mainView === "logs" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
-          <LogViewer baseUrl={activeHostUrl} />
-        </div>
+        {mainView === "logs" ? (
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+            <LogViewer baseUrl={activeHostUrl} />
+          </div>
+        ) : null}
         <div style={{ display: mainView === "settings" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
           <div className="settings-view">
             <div className="settings-header">

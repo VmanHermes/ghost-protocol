@@ -1828,3 +1828,61 @@ textarea { resize: vertical; }
 .approvals-empty-state { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .approval-info-card { border-color: rgba(96, 165, 250, 0.3); background: rgba(96, 165, 250, 0.08); }
 .approval-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; }
+
+/* CodeServerPanel styles */
+.code-server-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+  max-width: 600px;
+}
+.code-server-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.code-server-panel-icon {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent-blue);
+  font-family: monospace;
+}
+.code-server-panel-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.code-server-panel-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.code-server-panel-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.code-server-panel-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.code-server-panel-row {
+  display: flex;
+  gap: 12px;
+}
+.code-server-panel-row .label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  min-width: 80px;
+}
+.code-server-panel-row .value {
+  font-size: 0.88rem;
+  word-break: break-all;
+}
+.code-server-panel-actions {
+  display: flex;
+  gap: 8px;
+}

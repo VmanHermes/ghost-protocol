@@ -31,9 +31,52 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
     // 4. Recover sessions
     manager.recover().await;
 
+    // Recover code-server sessions
+    {
+        if let Ok(cs_sessions) = store.list_code_server_sessions() {
+            for session in cs_sessions {
+                if session.status != "running" && session.status != "created" {
+                    continue;
+                }
+                if session.adopted {
+                    if let Some(pid) = session.pid {
+                        let proc_path = format!("/proc/{pid}");
+                        if std::path::Path::new(&proc_path).exists() {
+                            tracing::info!(session_id = %session.id, pid, "recovered adopted code-server session");
+                            let store2 = store.clone();
+                            let sid = session.id.clone();
+                            tokio::spawn(async move {
+                                loop {
+                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                    let proc_path = format!("/proc/{pid}");
+                                    if !std::path::Path::new(&proc_path).exists() {
+                                        let now = chrono::Utc::now().to_rfc3339();
+                                        store2.update_terminal_session(&sid, Some("exited"), None, Some(&now), None, None, None).ok();
+                                        break;
+                                    }
+                                }
+                            });
+                        } else {
+                            store.update_terminal_session(&session.id, Some("exited"), None, Some(&chrono::Utc::now().to_rfc3339()), None, None, None).ok();
+                        }
+                    } else {
+                        store.update_terminal_session(&session.id, Some("exited"), None, Some(&chrono::Utc::now().to_rfc3339()), None, None, None).ok();
+                    }
+                } else {
+                    // Spawned sessions: process is gone after daemon restart
+                    store.update_terminal_session(&session.id, Some("exited"), None, Some(&chrono::Utc::now().to_rfc3339()), None, None, None).ok();
+                }
+            }
+        }
+    }
+
+    // Create supervisor broadcast channel before background task so it can be shared
+    let (supervisor_tx, _supervisor_rx) = tokio::sync::broadcast::channel::<crate::supervisor::SupervisorEvent>(256);
+
     // 5. Start background host health poller + discovery
     {
         let store = store.clone();
+        let supervisor_tx_bg = supervisor_tx.clone();
         tokio::spawn(async move {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(3))
@@ -104,6 +147,34 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
                         }
                     }
                 }
+
+                // Phase 3: Detect code-server instances
+                {
+                    let detected = crate::code_server::lifecycle::scan_running_code_servers();
+                    let tracked_pids: std::collections::HashSet<i64> = store
+                        .list_code_server_sessions()
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|s| s.status == "running" || s.status == "created")
+                        .filter_map(|s| s.pid)
+                        .collect();
+
+                    let untracked: Vec<_> = detected
+                        .into_iter()
+                        .filter(|cs| !tracked_pids.contains(&(cs.pid as i64)))
+                        .collect();
+
+                    if !untracked.is_empty() {
+                        tracing::info!(count = untracked.len(), "detected untracked code-server instances");
+                        let _ = supervisor_tx_bg.send(crate::supervisor::SupervisorEvent {
+                            event_type: "code_server_detected".to_string(),
+                            session_id: None,
+                            contract_id: None,
+                            ts: chrono::Utc::now().to_rfc3339(),
+                            payload: serde_json::json!({ "instances": untracked }),
+                        });
+                    }
+                }
             }
         });
     }
@@ -128,7 +199,7 @@ pub async fn run(settings: Settings, log_buffer: LogBuffer) -> Result<(), Box<dy
         store,
         manager,
         chat_manager,
-        supervisor_tx: tokio::sync::broadcast::channel(256).0,
+        supervisor_tx,
         log_buffer,
         bind_address: settings.bind_hosts.join(","),
         bind_port: settings.bind_port,

@@ -124,7 +124,7 @@ impl Store {
         let rows: Vec<MemoryRecord> = match project_id {
             Some(pid) => {
                 let sql = format!(
-                    "{} WHERE project_id = ?1 AND lesson IS NOT NULL ORDER BY importance DESC LIMIT ?2",
+                    "{} WHERE (project_id = ?1 OR project_id IS NULL) AND lesson IS NOT NULL ORDER BY importance DESC LIMIT ?2",
                     SELECT_COLS
                 );
                 let mut stmt = conn.prepare(&sql)?;
@@ -582,5 +582,71 @@ mod tests {
         let global_lessons = store.get_top_lessons(None, 10).unwrap();
         // no lesson set, so empty
         assert!(global_lessons.is_empty());
+    }
+
+    #[test]
+    fn test_get_top_lessons_includes_global_when_project_specified() {
+        let store = test_store();
+        store
+            .create_project("proj-1", "my-app", "/tmp/my-app", "{}")
+            .unwrap();
+
+        // Project-specific lesson
+        store
+            .create_memory(
+                "m1",
+                Some("proj-1"),
+                None,
+                "error",
+                "Project lesson",
+                "Content",
+                Some("Project-scoped lesson"),
+                "{}",
+                0.7,
+            )
+            .unwrap();
+
+        // Global lesson (no project)
+        store
+            .create_memory(
+                "m2",
+                None,
+                None,
+                "error",
+                "Global lesson",
+                "Content",
+                Some("Always applies everywhere"),
+                "{}",
+                0.9,
+            )
+            .unwrap();
+
+        // Lesson for a different project — should be excluded
+        store
+            .create_project("proj-2", "other-app", "/tmp/other", "{}")
+            .unwrap();
+        store
+            .create_memory(
+                "m3",
+                Some("proj-2"),
+                None,
+                "error",
+                "Other project lesson",
+                "Content",
+                Some("Only for proj-2"),
+                "{}",
+                0.8,
+            )
+            .unwrap();
+
+        let lessons = store.get_top_lessons(Some("proj-1"), 10).unwrap();
+        // Should include proj-1 lesson and global lesson, but not proj-2 lesson
+        assert_eq!(lessons.len(), 2);
+        let ids: Vec<&str> = lessons.iter().map(|l| l.id.as_str()).collect();
+        assert!(ids.contains(&"m1"));
+        assert!(ids.contains(&"m2"));
+        assert!(!ids.contains(&"m3"));
+        // Ordered by importance DESC — m2 (0.9) first
+        assert_eq!(lessons[0].id, "m2");
     }
 }

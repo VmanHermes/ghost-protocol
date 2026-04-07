@@ -12,6 +12,15 @@ fn default_limit() -> usize {
     5
 }
 
+fn record_has_all_tags(record: &MemoryRecord, tags: &[String]) -> bool {
+    if tags.is_empty() {
+        return true;
+    }
+    let metadata: MemoryMetadata =
+        serde_json::from_str(&record.metadata_json).unwrap_or_default();
+    tags.iter().all(|tag| metadata.tags.contains(tag))
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecallQuery {
@@ -81,12 +90,14 @@ pub fn recall(
     let machine = filters.and_then(|f| f.machine.as_deref());
     let outcome = filters.and_then(|f| f.outcome.as_deref());
     let category = filters.and_then(|f| f.category.as_deref());
+    let tags: Option<Vec<String>> = filters.and_then(|f| f.tags.clone());
 
     let has_any_filter = agent.is_some()
         || machine.is_some()
         || outcome.is_some()
         || category.is_some()
-        || project_id.is_some();
+        || project_id.is_some()
+        || tags.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
 
     // Case: no filters and no query — return top memories by importance
     if !has_any_filter && query.query.is_none() {
@@ -103,9 +114,14 @@ pub fn recall(
     }
 
     // Structured pass
-    let structured = store
+    let tag_filter = tags.as_deref().unwrap_or(&[]);
+    let structured_raw = store
         .query_memories_structured(project_id, agent, machine, outcome, category, limit)
         .unwrap_or_default();
+    let structured: Vec<MemoryRecord> = structured_raw
+        .into_iter()
+        .filter(|r| record_has_all_tags(r, tag_filter))
+        .collect();
 
     if structured.len() >= limit {
         let memories: Vec<RecallMemory> = structured.iter().map(RecallMemory::from_record).collect();
@@ -131,6 +147,9 @@ pub fn recall(
 
         for record in &all_records {
             if structured_ids.contains(record.id.as_str()) {
+                continue;
+            }
+            if !record_has_all_tags(record, tag_filter) {
                 continue;
             }
             if record.title.to_lowercase().contains(&q_lower)
@@ -332,5 +351,97 @@ mod tests {
             "Expected at most 10 memories, got {}",
             response.memories.len()
         );
+    }
+
+    #[test]
+    fn recall_tags_filter_narrows_results() {
+        let store = test_store();
+        store
+            .create_project("proj-1", "my-app", "/tmp/my-app", "{}")
+            .unwrap();
+
+        make_memory(
+            &store,
+            "m1",
+            Some("proj-1"),
+            "Tagged memory",
+            "Has the auth tag",
+            r#"{"tags":["auth","security"]}"#,
+        );
+        make_memory(
+            &store,
+            "m2",
+            Some("proj-1"),
+            "Different tags",
+            "Has a different tag set",
+            r#"{"tags":["database"]}"#,
+        );
+        make_memory(
+            &store,
+            "m3",
+            Some("proj-1"),
+            "No tags",
+            "Has no tags at all",
+            "{}",
+        );
+
+        let query = RecallQuery {
+            query: None,
+            filters: Some(RecallFilters {
+                project: Some("proj-1".to_string()),
+                agent: None,
+                machine: None,
+                outcome: None,
+                category: None,
+                tags: Some(vec!["auth".to_string()]),
+            }),
+            limit: 10,
+        };
+
+        let response = recall(&store, &query, None);
+        assert_eq!(response.memories.len(), 1);
+        assert_eq!(response.memories[0].title, "Tagged memory");
+    }
+
+    #[test]
+    fn recall_tags_filter_requires_all_tags() {
+        let store = test_store();
+        store
+            .create_project("proj-1", "my-app", "/tmp/my-app", "{}")
+            .unwrap();
+
+        make_memory(
+            &store,
+            "m1",
+            Some("proj-1"),
+            "Both tags",
+            "Has auth and security",
+            r#"{"tags":["auth","security"]}"#,
+        );
+        make_memory(
+            &store,
+            "m2",
+            Some("proj-1"),
+            "One tag only",
+            "Has only auth",
+            r#"{"tags":["auth"]}"#,
+        );
+
+        let query = RecallQuery {
+            query: None,
+            filters: Some(RecallFilters {
+                project: Some("proj-1".to_string()),
+                agent: None,
+                machine: None,
+                outcome: None,
+                category: None,
+                tags: Some(vec!["auth".to_string(), "security".to_string()]),
+            }),
+            limit: 10,
+        };
+
+        let response = recall(&store, &query, None);
+        assert_eq!(response.memories.len(), 1);
+        assert_eq!(response.memories[0].title, "Both tags");
     }
 }

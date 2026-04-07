@@ -88,14 +88,54 @@ impl ChatProcessManager {
         }
     }
 
+    fn try_enrich(&self, session_id: &str, workdir: &str) -> Option<String> {
+        use crate::intelligence::config::IntelligenceConfig;
+        use crate::intelligence::enricher::{enrich_session, ProjectCommands};
+
+        // Look up project by workdir
+        let project = self.store.get_project_by_workdir(workdir).ok().flatten();
+        let config_json = project.as_ref().map(|p| p.config_json.as_str());
+        let intel_config = IntelligenceConfig::resolve(config_json);
+
+        if !intel_config.is_active() {
+            return None;
+        }
+
+        let project_id = project.as_ref().map(|p| p.id.as_str());
+        let project_name = project.as_ref().map(|p| p.name.as_str());
+        let machine_name = hostname::get().ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let commands = config_json.map(|j| ProjectCommands::from_config_json(j));
+
+        let result = enrich_session(
+            &self.store,
+            &intel_config,
+            project_id,
+            project_name,
+            &machine_name,
+            commands.as_ref(),
+        );
+
+        Some(result.system_prompt)
+    }
+
     pub async fn spawn_session(
         &self,
         session_id: &str,
         agent: &AgentInfo,
         workdir: &str,
-        launch: ChatSessionLaunchConfig,
+        mut launch: ChatSessionLaunchConfig,
     ) -> Result<(), String> {
         let workdir = crate::workdir::expand_workdir(workdir);
+
+        if launch.system_prompt.is_none() {
+            if let Some(prompt) = self.try_enrich(session_id, &workdir) {
+                launch.system_prompt = Some(prompt);
+            }
+        }
+
         let (program, args) = Self::build_chat_command(agent, session_id, &launch);
 
         let mut child = Command::new(&program)
@@ -300,6 +340,63 @@ impl ChatProcessManager {
 
             processes.lock().await.remove(&session_id_read);
             info!(session_id = %session_id_read, "chat process exited");
+
+            // Post-session processing (intelligence layer)
+            {
+                let store2 = store.clone();
+                let session_id2 = session_id_read.clone();
+                tokio::spawn(async move {
+                    use crate::intelligence::config::IntelligenceConfig;
+                    use crate::intelligence::processor::{self, SessionContext};
+                    use crate::intelligence::provider;
+
+                    let session = match store2.get_terminal_session(&session_id2) {
+                        Ok(Some(s)) => s,
+                        _ => return,
+                    };
+
+                    let config_json = session.project_id.as_ref()
+                        .and_then(|pid| store2.get_project(pid).ok().flatten())
+                        .map(|p| p.config_json);
+                    let config = IntelligenceConfig::resolve(config_json.as_deref());
+
+                    if !config.is_active() {
+                        return;
+                    }
+
+                    let prov = match provider::create_provider(&config) {
+                        Some(p) => p,
+                        None => return,
+                    };
+
+                    let transcript = processor::build_transcript_from_chat(&store2, &session_id2);
+                    let machine = hostname::get().ok()
+                        .and_then(|h| h.into_string().ok())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    let duration = session.started_at.as_ref().and_then(|start| {
+                        let start = chrono::DateTime::parse_from_rfc3339(start).ok()?;
+                        let end = session.finished_at.as_ref()
+                            .and_then(|f| chrono::DateTime::parse_from_rfc3339(f).ok())
+                            .unwrap_or_else(|| chrono::Utc::now().into());
+                        Some((end - start).num_seconds() as f64)
+                    });
+
+                    let ctx = SessionContext {
+                        session_id: session_id2.clone(),
+                        project_id: session.project_id,
+                        agent_id: session.agent_id,
+                        machine,
+                        session_type: session.session_type,
+                        duration_secs: duration,
+                        transcript,
+                    };
+
+                    if let Err(e) = processor::process_session(&store2, prov.as_ref(), &config, ctx).await {
+                        tracing::warn!(session_id = %session_id2, error = %e, "post-session processing failed");
+                    }
+                });
+            }
         });
 
         info!(session_id = %session_id, agent = %agent.name, "chat process spawned");

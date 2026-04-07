@@ -29,7 +29,8 @@ pub struct MemoryMetadata {
     pub outcome: Option<String>,
     pub error_type: Option<String>,
     pub session_type: Option<String>,
-    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRecord> {
@@ -88,17 +89,30 @@ impl Store {
 
     pub fn list_memories_by_project(
         &self,
-        project_id: &str,
+        project_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, rusqlite::Error> {
         let conn = self.conn();
-        let sql = format!(
-            "{} WHERE project_id = ?1 ORDER BY importance DESC, accessed_at DESC LIMIT ?2",
-            SELECT_COLS
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![project_id, limit as i64], map_row)?;
-        rows.collect()
+        match project_id {
+            Some(pid) => {
+                let sql = format!(
+                    "{} WHERE project_id = ?1 OR project_id IS NULL ORDER BY importance DESC, accessed_at DESC LIMIT ?2",
+                    SELECT_COLS
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(params![pid, limit as i64], map_row)?;
+                rows.collect()
+            }
+            None => {
+                let sql = format!(
+                    "{} ORDER BY importance DESC, accessed_at DESC LIMIT ?1",
+                    SELECT_COLS
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(params![limit as i64], map_row)?;
+                rows.collect()
+            }
+        }
     }
 
     pub fn get_top_lessons(
@@ -192,19 +206,11 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::ToSql> = positional.iter().map(|b| b.as_ref()).collect();
-        let ids: Vec<String> = stmt
-            .query_map(param_refs.as_slice(), map_row)?
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|r| r.id.clone())
-            .collect();
-
-        // Re-query to get records (we need to touch accessed_at)
-        // First collect the records, then update accessed_at for each
-        let mut stmt2 = conn.prepare(&sql)?;
-        let records: Vec<MemoryRecord> = stmt2
+        let records: Vec<MemoryRecord> = stmt
             .query_map(param_refs.as_slice(), map_row)?
             .collect::<Result<Vec<_>, _>>()?;
+
+        let ids: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
 
         if !ids.is_empty() {
             let now = Utc::now().to_rfc3339();
@@ -220,8 +226,8 @@ impl Store {
             );
             let mut update_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
             update_params.push(Box::new(now));
-            for id in &ids {
-                update_params.push(Box::new(id.clone()));
+            for id in ids {
+                update_params.push(Box::new(id.to_string()));
             }
             let update_refs: Vec<&dyn rusqlite::ToSql> =
                 update_params.iter().map(|b| b.as_ref()).collect();
@@ -322,12 +328,12 @@ mod tests {
             )
             .unwrap();
 
-        let proj1 = store.list_memories_by_project("proj-1", 100).unwrap();
+        let proj1 = store.list_memories_by_project(Some("proj-1"), 100).unwrap();
         assert_eq!(proj1.len(), 2);
         // Ordered by importance DESC — m2 (0.9) should come first
         assert_eq!(proj1[0].id, "m2");
 
-        let proj2 = store.list_memories_by_project("proj-2", 100).unwrap();
+        let proj2 = store.list_memories_by_project(Some("proj-2"), 100).unwrap();
         assert_eq!(proj2.len(), 1);
         assert_eq!(proj2[0].id, "m3");
     }
@@ -497,7 +503,7 @@ mod tests {
             .unwrap();
 
         let before = store
-            .list_memories_by_project("proj-1", 1)
+            .list_memories_by_project(Some("proj-1"), 1)
             .unwrap()
             .into_iter()
             .next()
@@ -511,7 +517,7 @@ mod tests {
             .unwrap();
 
         let after = store
-            .list_memories_by_project("proj-1", 1)
+            .list_memories_by_project(Some("proj-1"), 1)
             .unwrap()
             .into_iter()
             .next()
@@ -535,7 +541,7 @@ mod tests {
         let not_deleted = store.delete_memory("m1").unwrap();
         assert!(!not_deleted);
 
-        let remaining = store.list_memories_by_project("proj-1", 100).unwrap();
+        let remaining = store.list_memories_by_project(Some("proj-1"), 100).unwrap();
         assert!(remaining.is_empty());
     }
 

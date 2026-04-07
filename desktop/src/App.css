@@ -1886,3 +1886,24 @@ textarea { resize: vertical; }
   display: flex;
   gap: 8px;
 }
+.code-server-detection-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+.code-server-detection-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+.code-server-start-dialog {
+  padding: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin: 8px 0;
+}

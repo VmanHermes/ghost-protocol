@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
+  adoptCodeServer,
   createChatSession,
+  createCodeServerSession,
   createCompanionTerminal,
   listAgents,
+  listDetectedCodeServers,
   listProjects,
   reopenWorkSession,
   switchSessionMode,
@@ -12,9 +15,11 @@ import { useChatSocket } from "../hooks/useChatSocket";
 import { SessionSidebar } from "./SessionSidebar";
 import { SessionHeader } from "./SessionHeader";
 import { ChatRenderer } from "./ChatRenderer";
+import { CodeServerPanel } from "./CodeServerPanel";
 import { TerminalRenderer } from "./TerminalRenderer";
 import type {
   AgentInfo,
+  CodeServerInfo,
   HostConnection,
   LocalTerminalSession,
   ProjectRecord,
@@ -65,6 +70,9 @@ export function AgentsView({
   const [activeMode, setActiveMode] = useState<SessionMode>("chat");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detectedCodeServers, setDetectedCodeServers] = useState<CodeServerInfo[]>([]);
+  const [showStartCodeServer, setShowStartCodeServer] = useState(false);
+  const [codeServerWorkdir, setCodeServerWorkdir] = useState("");
 
   const activeSessions = sessions.filter((session) => session.status === "running" || session.status === "created");
   const previousSessions = sessions.filter((session) => session.status !== "running" && session.status !== "created");
@@ -176,6 +184,19 @@ export function AgentsView({
       : projects.find((project) => project.workdir === activeSessionWorkdir);
     setSelectedProjectId(matchedProject?.id ?? activeSessionProjectId);
   }, [activeSession, activeSessionProjectId, activeSessionWorkdir, projects]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const poll = async () => {
+      try {
+        const detected = await listDetectedCodeServers(activeSessionBaseUrl);
+        setDetectedCodeServers(detected);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const interval = setInterval(poll, 10000);
+    return () => clearInterval(interval);
+  }, [activeSessionBaseUrl, visible]);
 
   const handleSessionRenamed = useCallback(() => {
     void onRefreshSessions();
@@ -420,6 +441,17 @@ export function AgentsView({
           {loading ? "Starting..." : "+ New Session"}
         </button>
 
+        <button
+          className="btn-secondary"
+          style={{ fontSize: "0.78rem" }}
+          onClick={() => {
+            setCodeServerWorkdir("~/");
+            setShowStartCodeServer(true);
+          }}
+        >
+          Start code-server
+        </button>
+
         {error && <span style={{ color: "var(--accent-red)", fontSize: "0.78rem" }}>{error}</span>}
       </div>
 
@@ -448,6 +480,38 @@ export function AgentsView({
       </div>
 
       <div className="agents-main">
+        {detectedCodeServers.length > 0 && (
+          <div className="code-server-detection-banner">
+            {detectedCodeServers.map((cs) => (
+              <div key={cs.pid} className="code-server-detection-item">
+                <span>code-server detected at <strong>{cs.workdir}</strong> (port {cs.port})</span>
+                <button
+                  className="btn-secondary"
+                  style={{ fontSize: "0.78rem", padding: "2px 10px" }}
+                  onClick={async () => {
+                    try {
+                      await adoptCodeServer(activeSessionBaseUrl, cs.pid);
+                      setDetectedCodeServers((prev) => prev.filter((d) => d.pid !== cs.pid));
+                      void onRefreshSessions();
+                    } catch (err) {
+                      console.error("Failed to adopt:", err);
+                    }
+                  }}
+                >
+                  Adopt
+                </button>
+                <button
+                  className="btn-ghost"
+                  style={{ fontSize: "0.78rem", padding: "2px 8px" }}
+                  onClick={() => setDetectedCodeServers((prev) => prev.filter((d) => d.pid !== cs.pid))}
+                >
+                  Dismiss
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <SessionSidebar
           activeSessions={activeSessions}
           previousSessions={previousSessions}
@@ -462,6 +526,46 @@ export function AgentsView({
         />
 
         <div className="agents-content">
+          {showStartCodeServer && (
+            <div className="code-server-start-dialog">
+              <div style={{ fontSize: "0.88rem", fontWeight: 600, marginBottom: 8 }}>Start code-server</div>
+              <label style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
+                Working directory
+                <input
+                  type="text"
+                  value={codeServerWorkdir}
+                  onChange={(e) => setCodeServerWorkdir(e.target.value)}
+                  style={{ width: "100%", marginTop: 4 }}
+                  autoFocus
+                />
+              </label>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button
+                  className="btn-primary"
+                  style={{ fontSize: "0.82rem" }}
+                  onClick={async () => {
+                    try {
+                      await createCodeServerSession(launchDaemonUrl, codeServerWorkdir);
+                      setShowStartCodeServer(false);
+                      void onRefreshSessions();
+                    } catch (err) {
+                      console.error("Failed to start code-server:", err);
+                    }
+                  }}
+                >
+                  Start
+                </button>
+                <button
+                  className="btn-secondary"
+                  style={{ fontSize: "0.82rem" }}
+                  onClick={() => setShowStartCodeServer(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {activeSession ? (
             <>
               <SessionHeader
@@ -474,7 +578,13 @@ export function AgentsView({
                 onEndSession={handleEndSession}
               />
 
-              {activeMode === "chat" && !isLocalSession ? (
+              {activeSession.driverKind === "code_server_driver" ? (
+                <CodeServerPanel
+                  session={activeSession}
+                  baseUrl={activeSessionBaseUrl}
+                  onRefresh={onRefreshSessions}
+                />
+              ) : activeMode === "chat" && !isLocalSession ? (
                 <ChatRenderer
                   messages={chatSocket.messages}
                   streamingDelta={chatSocket.streamingDelta}

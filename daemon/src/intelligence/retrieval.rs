@@ -1,3 +1,8 @@
+// TODO: When sqlite-vec crate is available, replace keyword search fallback
+// with proper vector similarity search. The structured metadata filtering
+// handles the primary use case; vector search is the semantic fallback.
+// See spec: docs/superpowers/specs/2026-04-07-intelligence-layer-design.md
+
 use serde::{Deserialize, Serialize};
 
 use crate::intelligence::memory::{MemoryMetadata, MemoryRecord};

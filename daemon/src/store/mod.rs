@@ -48,6 +48,8 @@ impl Store {
             .ok(); // idempotent — ALTER TABLE may fail if columns already exist
         conn.execute_batch(include_str!("../../migrations/008_supervisor_core.sql"))
             .ok(); // idempotent — ALTER TABLE may fail if columns already exist
+        conn.execute_batch(include_str!("../../migrations/009_code_server.sql"))
+            .ok(); // idempotent — ALTER TABLE may fail if columns already exist
 
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),

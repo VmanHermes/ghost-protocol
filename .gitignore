@@ -22,6 +22,7 @@ dist/
 
 # Rust / daemon
 daemon/target/
+daemon/schema/latest.sql
 .worktrees/
 
 .superpowers/

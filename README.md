@@ -70,6 +70,9 @@ sudo ./install.sh
 git clone git@github.com:VmanHermes/ghost-protocol.git
 cd ghost-protocol
 
+# Install desktop dependencies once
+cd desktop && npm install && cd ..
+
 # Build daemon
 cd daemon && cargo build --release && cd ..
 
@@ -77,7 +80,10 @@ cd daemon && cargo build --release && cd ..
 cd cli && cargo build --release && cd ..
 
 # Build desktop app
-cd desktop && npm install && npm run tauri build
+cd desktop && npm run tauri build
+
+# Or build the full packaged app flow
+bash scripts/package.sh
 ```
 
 ## Run
@@ -102,12 +108,17 @@ cd cli && cargo run -- agents
 
 To start components individually:
 ```bash
+# Shared dev DB path
+export GHOST_PROTOCOL_DB="$(pwd)/data/dev/ghost_protocol-dev.db"
+
 # Terminal 1: Daemon
 cd daemon && cargo run -- serve
 
 # Terminal 2: Desktop app
-cd desktop && npm run tauri dev
+cd desktop && GHOST_NO_SIDECAR=1 npm run tauri dev
 ```
+
+If you do not set `GHOST_NO_SIDECAR=1`, the desktop app will try to launch its own daemon sidecar.
 
 ### Production
 
@@ -150,14 +161,31 @@ ghost-protocol-daemon info                 # Full machine profile as JSON
 
 ## Database
 
-The daemon uses SQLite, stored at `./data/ghost_protocol.db` by default (configurable via `--db-path` or `GHOST_PROTOCOL_DB` env var).
+Ghost Protocol uses SQLite.
+
+- Raw daemon CLI default: `./data/ghost_protocol.db`
+- Desktop dev default: `./data/dev/ghost_protocol-dev.db`
+- Packaged desktop default: Tauri app data directory (`ghost_protocol.db`)
+- Any mode can be overridden with `--db-path` or `GHOST_PROTOCOL_DB`
 
 **Migrations run automatically** on daemon startup — no manual migration step needed.
 
-**Reset the database:**
+**Reset the dev database:**
+```bash
+# Show the current dev DB path
+cd desktop && npm run db:path:dev
+
+# Stop the app/daemon first, then reset it
+cd desktop && npm run db:reset:dev
+
+# Restart dev
+bash scripts/dev.sh
+```
+
+**Reset a manually-run daemon database:**
 ```bash
 # Stop the daemon first, then:
-rm -f data/ghost_protocol.db
+rm -f data/ghost_protocol.db data/ghost_protocol.db-wal data/ghost_protocol.db-shm
 
 # Restart — daemon recreates the database with all tables
 ghost-protocol-daemon serve
@@ -196,7 +224,7 @@ The daemon exposes an MCP server for AI agent integration:
 | `GHOST_PROTOCOL_BIND_HOST` | `--bind-host` | `127.0.0.1` | Bind address (comma-separated for multiple) |
 | `GHOST_PROTOCOL_BIND_PORT` | `--bind-port` | `8787` | HTTP port |
 | `GHOST_PROTOCOL_ALLOWED_CIDRS` | `--allowed-cidrs` | Tailscale ranges + localhost | IP allowlist |
-| `GHOST_PROTOCOL_DB` | `--db-path` | `./data/ghost_protocol.db` | SQLite database path |
+| `GHOST_PROTOCOL_DB` | `--db-path` | `./data/ghost_protocol.db` (daemon CLI) | SQLite database path override |
 | `GHOST_PROTOCOL_LOG_DIR` | `--log-dir` | `./data/logs` | Log directory |
 
 ## Useful commands
@@ -228,8 +256,11 @@ cd desktop && npx tsc --noEmit
 # Run daemon tests
 cd daemon && cargo test
 
-# Prepare a release (sync version, run checks, build tarball)
-bash scripts/release.sh 0.2.2
+# Build packaged artifacts locally
+bash scripts/package.sh
+
+# Prepare a release (sync version, run checks, build artifacts)
+bash scripts/release.sh 0.2.5
 ```
 
 ## Docs

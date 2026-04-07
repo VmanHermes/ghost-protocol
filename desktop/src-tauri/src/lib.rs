@@ -1,12 +1,16 @@
-mod pty;
 mod detect;
+mod pty;
 
 use pty::PtyManager;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Manager, State};
+use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::process::CommandChild;
-use tauri_plugin_shell::ShellExt;
+
+const DEV_DAEMON_DB_RELATIVE_PATH: &str = "data/dev/ghost_protocol-dev.db";
+const RELEASE_DAEMON_DB_FILENAME: &str = "ghost_protocol.db";
 
 #[tauri::command]
 fn pty_spawn(
@@ -66,12 +70,49 @@ fn default_daemon_bind_hosts() -> Option<String> {
     )
 }
 
-fn apply_daemon_bind_args(command: Command, bind_hosts: Option<&str>) -> Command {
+fn configured_daemon_db_path(configured_db_path: Option<&str>) -> Option<PathBuf> {
+    configured_db_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn default_dev_daemon_db_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join(DEV_DAEMON_DB_RELATIVE_PATH)
+}
+
+fn default_release_daemon_db_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join(RELEASE_DAEMON_DB_FILENAME))
+}
+
+fn resolve_daemon_db_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    configured_daemon_db_path(std::env::var("GHOST_PROTOCOL_DB").ok().as_deref()).or_else(|| {
+        if cfg!(debug_assertions) {
+            Some(default_dev_daemon_db_path())
+        } else {
+            default_release_daemon_db_path(app)
+        }
+    })
+}
+
+fn apply_daemon_startup_args(
+    mut command: Command,
+    bind_hosts: Option<&str>,
+    db_path: Option<&Path>,
+) -> Command {
     if let Some(bind_hosts) = bind_hosts {
-        command.args(["--bind-host", bind_hosts])
-    } else {
-        command
+        command = command.args(["--bind-host", bind_hosts]);
     }
+    if let Some(db_path) = db_path {
+        command = command.arg("--db-path").arg(db_path.as_os_str());
+    }
+    command
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -88,7 +129,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(PtyManager::new())
         .invoke_handler(tauri::generate_handler![
-            pty_spawn, pty_write, pty_resize, pty_kill,
+            pty_spawn,
+            pty_write,
+            pty_resize,
+            pty_kill,
             detect::detect_tmux,
             detect::detect_tailscale,
             detect::detect_daemon,
@@ -110,14 +154,25 @@ pub fn run() {
                 return Ok(());
             }
 
+            let app_handle = app.handle().clone();
             let bind_hosts = default_daemon_bind_hosts();
+            let db_path = resolve_daemon_db_path(&app_handle);
             if let Some(bind_hosts) = bind_hosts.as_deref() {
                 eprintln!("[daemon] binding daemon to {bind_hosts}");
+            }
+            if let Some(db_path) = db_path.as_deref() {
+                eprintln!("[daemon] using db path {}", db_path.display());
             }
 
             // Try bundled sidecar first, then fall back to system-installed daemon
             let spawned = match app.shell().sidecar("binaries/ghost-protocol-daemon") {
-                Ok(sidecar) => match apply_daemon_bind_args(sidecar, bind_hosts.as_deref()).spawn() {
+                Ok(sidecar) => match apply_daemon_startup_args(
+                    sidecar,
+                    bind_hosts.as_deref(),
+                    db_path.as_deref(),
+                )
+                .spawn()
+                {
                     Ok(result) => {
                         eprintln!("[daemon] started bundled sidecar");
                         Some(result)
@@ -135,7 +190,13 @@ pub fn run() {
 
             // Fall back to system-installed ghost-protocol-daemon
             let spawned = spawned.or_else(|| {
-                match apply_daemon_bind_args(app.shell().command("ghost-protocol-daemon"), bind_hosts.as_deref()).spawn() {
+                match apply_daemon_startup_args(
+                    app.shell().command("ghost-protocol-daemon"),
+                    bind_hosts.as_deref(),
+                    db_path.as_deref(),
+                )
+                .spawn()
+                {
                     Ok(result) => {
                         eprintln!("[daemon] started system-installed daemon from PATH");
                         Some(result)
@@ -194,7 +255,11 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_daemon_bind_hosts;
+    use super::{
+        DEV_DAEMON_DB_RELATIVE_PATH, configured_daemon_db_path, default_dev_daemon_db_path,
+        resolve_daemon_bind_hosts,
+    };
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn respects_explicit_bind_host_override() {
@@ -218,5 +283,22 @@ mod tests {
     fn returns_none_without_override_or_tailscale_ip() {
         let bind_hosts = resolve_daemon_bind_hosts(None, None);
         assert_eq!(bind_hosts, None);
+    }
+
+    #[test]
+    fn trims_explicit_db_path_override() {
+        let db_path = configured_daemon_db_path(Some(" /tmp/ghost.db "));
+        assert_eq!(db_path, Some(PathBuf::from("/tmp/ghost.db")));
+    }
+
+    #[test]
+    fn ignores_blank_db_path_override() {
+        let db_path = configured_daemon_db_path(Some("   "));
+        assert_eq!(db_path, None);
+    }
+
+    #[test]
+    fn dev_db_path_points_to_repo_dev_data_dir() {
+        assert!(default_dev_daemon_db_path().ends_with(Path::new(DEV_DAEMON_DB_RELATIVE_PATH)));
     }
 }

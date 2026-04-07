@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+DEV_DB_PATH="$ROOT_DIR/data/dev/ghost_protocol-dev.db"
 PIDS=()
 
 cleanup() {
@@ -18,9 +19,11 @@ trap cleanup EXIT INT TERM
 # Reset database if --reset flag passed
 if [[ "${1:-}" == "--reset" ]]; then
     echo "==> Resetting database..."
-    rm -f "$ROOT_DIR/data/ghost_protocol.db"
+    rm -f "$DEV_DB_PATH" "$DEV_DB_PATH-wal" "$DEV_DB_PATH-shm"
     shift
 fi
+
+mkdir -p "$(dirname "$DEV_DB_PATH")"
 
 # 0. Build and install ghost CLI to ~/.local/bin
 echo "==> Building ghost CLI..."
@@ -43,8 +46,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # 1. Start daemon
 echo "==> Starting daemon..."
+echo "==> Dev DB: $DEV_DB_PATH"
 cd "$ROOT_DIR/daemon"
-cargo run -- serve &
+GHOST_PROTOCOL_DB="$DEV_DB_PATH" cargo run -- serve &
 PIDS+=($!)
 
 # Wait for daemon to be ready
@@ -63,13 +67,14 @@ done
 # 2. Start desktop app
 echo "==> Starting desktop app..."
 cd "$ROOT_DIR/desktop"
-npm run tauri dev &
+GHOST_NO_SIDECAR=1 GHOST_PROTOCOL_DB="$DEV_DB_PATH" npm run tauri dev &
 PIDS+=($!)
 
 echo ""
 echo "==> Ghost Protocol dev environment running."
 echo "    Daemon:  http://127.0.0.1:8787"
 echo "    Desktop: Tauri dev window"
+echo "    DB:      $DEV_DB_PATH"
 echo "    CLI:     cd cli && cargo run -- <command>"
 echo ""
 echo "    Press Ctrl+C to stop all."

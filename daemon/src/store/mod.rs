@@ -1,55 +1,49 @@
-pub mod sessions;
-pub mod chunks;
-pub mod hosts;
-pub mod permissions;
-pub mod discoveries;
-pub mod outcomes;
-pub mod projects;
 pub mod chat;
+pub mod chunks;
 pub mod delegations;
+pub mod discoveries;
+pub mod hosts;
+pub mod outcomes;
+pub mod permissions;
+pub mod projects;
+pub mod sessions;
 pub mod skills;
 
+use rusqlite::Connection;
+use rusqlite_migration::{M, Migrations};
+use std::error::Error;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use rusqlite::Connection;
+
+const MIGRATIONS_SLICE: &[M<'static>] = &[
+    M::up(include_str!("../../migrations/001_initial.sql")),
+    M::up(include_str!("../../migrations/002_known_hosts.sql")),
+    M::up(include_str!("../../migrations/003_peer_permissions.sql")),
+    M::up(include_str!("../../migrations/004_discovered_peers.sql")),
+    M::up(include_str!("../../migrations/005_outcome_log.sql")),
+    M::up(include_str!("../../migrations/006_projects_and_chat.sql")),
+    M::up(include_str!("../../migrations/007_session_metadata.sql")),
+    M::up(include_str!("../../migrations/008_session_delegation.sql")),
+    M::up(include_str!("../../migrations/009_supervisor_core.sql")),
+    M::up(include_str!("../../migrations/010_code_server.sql")),
+];
+
+const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
+#[cfg(test)]
+const LATEST_SCHEMA_VERSION: usize = MIGRATIONS_SLICE.len();
 
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
 }
 
 impl Store {
-    pub fn open(db_path: &Path) -> Result<Self, rusqlite::Error> {
+    pub fn open(db_path: &Path) -> Result<Self, Box<dyn Error>> {
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        let migration_001 = include_str!("../../migrations/001_initial.sql");
-        conn.execute_batch(migration_001)?;
-        let migration_002 = include_str!("../../migrations/002_known_hosts.sql");
-        conn.execute_batch(migration_002)?;
-        let migration_003 = include_str!("../../migrations/003_peer_permissions.sql");
-        conn.execute_batch(migration_003)?;
-        let migration_004 = include_str!("../../migrations/004_discovered_peers.sql");
-        conn.execute_batch(migration_004)?;
-        let migration_005 = include_str!("../../migrations/005_outcome_log.sql");
-        conn.execute_batch(migration_005)?;
-        let migration_006 = include_str!("../../migrations/006_projects_and_chat.sql");
-        conn.execute_batch(migration_006)?;
-
-        // Add session_type and project_id columns (idempotent)
-        conn.execute_batch(
-            "ALTER TABLE terminal_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'terminal';"
-        ).ok();
-        conn.execute_batch(
-            "ALTER TABLE terminal_sessions ADD COLUMN project_id TEXT REFERENCES projects(id);"
-        ).ok();
-        conn.execute_batch(include_str!("../../migrations/007_session_delegation.sql"))
-            .ok(); // idempotent — ALTER TABLE may fail if columns already exist
-        conn.execute_batch(include_str!("../../migrations/008_supervisor_core.sql"))
-            .ok(); // idempotent — ALTER TABLE may fail if columns already exist
-        conn.execute_batch(include_str!("../../migrations/009_code_server.sql"))
-            .ok(); // idempotent — ALTER TABLE may fail if columns already exist
+        MIGRATIONS.to_latest(&mut conn)?;
 
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
@@ -72,4 +66,67 @@ impl Clone for Store {
 #[cfg(test)]
 pub fn test_store() -> Store {
     Store::open(Path::new(":memory:")).expect("in-memory db")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZeroUsize;
+
+    #[test]
+    fn migrations_validate() {
+        MIGRATIONS
+            .validate()
+            .expect("migration set should be valid");
+    }
+
+    #[test]
+    fn open_sets_schema_version_on_fresh_db() {
+        let store = test_store();
+        let conn = store.conn();
+
+        assert_eq!(
+            MIGRATIONS.current_version(&conn).expect("schema version"),
+            rusqlite_migration::SchemaVersion::Inside(
+                NonZeroUsize::new(LATEST_SCHEMA_VERSION).expect("non-zero schema version"),
+            )
+        );
+        assert!(column_exists(&conn, "terminal_sessions", "session_type"));
+        assert!(column_exists(&conn, "terminal_sessions", "project_id"));
+        assert!(column_exists(
+            &conn,
+            "terminal_sessions",
+            "parent_session_id"
+        ));
+        assert!(column_exists(&conn, "terminal_sessions", "root_session_id"));
+        assert!(column_exists(&conn, "terminal_sessions", "port"));
+        assert!(table_exists(&conn, "delegation_contracts"));
+        assert!(table_exists(&conn, "agent_messages"));
+        assert!(table_exists(&conn, "skill_candidates"));
+    }
+
+    fn table_exists(conn: &Connection, table_name: &str) -> bool {
+        conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1",
+            [table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .ok()
+        .is_some()
+    }
+
+    fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .expect("prepare table info");
+        let mut rows = stmt.query([]).expect("query table info");
+
+        while let Some(row) = rows.next().expect("next row") {
+            if row.get::<_, String>(1).expect("column name") == column_name {
+                return true;
+            }
+        }
+
+        false
+    }
 }

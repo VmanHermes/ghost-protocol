@@ -1,4 +1,4 @@
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -186,10 +186,7 @@ Commands:\r\n\
                                 exit_code: Some(code),
                             },
                         );
-                        waiter_sessions
-                            .lock()
-                            .unwrap()
-                            .remove(&waiter_session_id);
+                        waiter_sessions.lock().unwrap().remove(&waiter_session_id);
                         break;
                     }
                     Ok(None) => {
@@ -204,10 +201,7 @@ Commands:\r\n\
                                 exit_code: None,
                             },
                         );
-                        waiter_sessions
-                            .lock()
-                            .unwrap()
-                            .remove(&waiter_session_id);
+                        waiter_sessions.lock().unwrap().remove(&waiter_session_id);
                         break;
                     }
                 }

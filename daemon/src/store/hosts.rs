@@ -1,8 +1,16 @@
 use chrono::Utc;
 use rusqlite::params;
-use serde::{Deserialize, Serialize};
+use rusqlite::types::Type;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_rusqlite::{from_rows, to_params_named};
 
 use super::Store;
+
+const INSERT_KNOWN_HOST_SQL: &str = include_str!("../../sql/store/hosts/insert_known_host.sql");
+const LIST_KNOWN_HOSTS_SQL: &str = include_str!("../../sql/store/hosts/list_known_hosts.sql");
+const GET_KNOWN_HOST_SQL: &str = include_str!("../../sql/store/hosts/get_known_host.sql");
+const UPDATE_HOST_STATUS_SQL: &str = include_str!("../../sql/store/hosts/update_host_status.sql");
+const REMOVE_KNOWN_HOST_SQL: &str = include_str!("../../sql/store/hosts/remove_known_host.sql");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,11 +43,14 @@ impl Store {
         url: &str,
     ) -> Result<KnownHost, rusqlite::Error> {
         let conn = self.conn();
-        conn.execute(
-            "INSERT INTO known_hosts (id, name, tailscale_ip, url, status)
-             VALUES (?1, ?2, ?3, ?4, 'unknown')",
-            params![id, name, tailscale_ip, url],
-        )?;
+        let input = InsertKnownHostParams {
+            id,
+            name,
+            tailscale_ip,
+            url,
+        };
+        let params = to_params_named(&input).map_err(to_to_sql_error)?;
+        conn.execute(INSERT_KNOWN_HOST_SQL, params.to_slice().as_slice())?;
         Ok(KnownHost {
             id: id.to_string(),
             name: name.to_string(),
@@ -53,51 +64,19 @@ impl Store {
 
     pub fn list_known_hosts(&self) -> Result<Vec<KnownHost>, rusqlite::Error> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, name, tailscale_ip, url, status, last_seen, capabilities_json
-             FROM known_hosts ORDER BY name ASC",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            let caps_json: Option<String> = row.get(6)?;
-            let capabilities = caps_json
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok());
-            Ok(KnownHost {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                tailscale_ip: row.get(2)?,
-                url: row.get(3)?,
-                status: row.get(4)?,
-                last_seen: row.get(5)?,
-                capabilities,
-            })
-        })?;
-        rows.collect()
+        let mut stmt = conn.prepare(LIST_KNOWN_HOSTS_SQL)?;
+        let rows = from_rows::<KnownHostRow>(stmt.query([])?);
+        rows.map(|row| row.map(Into::into).map_err(to_from_sql_error))
+            .collect()
     }
 
     pub fn get_known_host(&self, id: &str) -> Result<Option<KnownHost>, rusqlite::Error> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, name, tailscale_ip, url, status, last_seen, capabilities_json
-             FROM known_hosts WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query_map(params![id], |row| {
-            let caps_json: Option<String> = row.get(6)?;
-            let capabilities = caps_json
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok());
-            Ok(KnownHost {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                tailscale_ip: row.get(2)?,
-                url: row.get(3)?,
-                status: row.get(4)?,
-                last_seen: row.get(5)?,
-                capabilities,
-            })
-        })?;
+        let mut stmt = conn.prepare(GET_KNOWN_HOST_SQL)?;
+        let params = to_params_named(&GetKnownHostParams { id }).map_err(to_to_sql_error)?;
+        let mut rows = from_rows::<KnownHostRow>(stmt.query(params.to_slice().as_slice())?);
         match rows.next() {
-            Some(row) => Ok(Some(row?)),
+            Some(row) => row.map(Into::into).map(Some).map_err(to_from_sql_error),
             None => Ok(None),
         }
     }
@@ -110,19 +89,90 @@ impl Store {
     ) -> Result<(), rusqlite::Error> {
         let now = Utc::now().to_rfc3339();
         let conn = self.conn();
-        let caps_json = capabilities.map(|c| serde_json::to_string(c).unwrap());
-        conn.execute(
-            "UPDATE known_hosts SET status = ?1, last_seen = ?2, capabilities_json = ?3 WHERE id = ?4",
-            params![status, now, caps_json, id],
-        )?;
+        let input = UpdateHostStatusParams {
+            id,
+            status,
+            last_seen: &now,
+            capabilities_json: capabilities
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?,
+        };
+        let params = to_params_named(&input).map_err(to_to_sql_error)?;
+        conn.execute(UPDATE_HOST_STATUS_SQL, params.to_slice().as_slice())?;
         Ok(())
     }
 
     pub fn remove_known_host(&self, id: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn();
-        conn.execute("DELETE FROM known_hosts WHERE id = ?1", params![id])?;
+        conn.execute(REMOVE_KNOWN_HOST_SQL, params![id])?;
         Ok(())
     }
+}
+
+#[derive(Serialize)]
+struct InsertKnownHostParams<'a> {
+    id: &'a str,
+    name: &'a str,
+    tailscale_ip: &'a str,
+    url: &'a str,
+}
+
+#[derive(Serialize)]
+struct GetKnownHostParams<'a> {
+    id: &'a str,
+}
+
+#[derive(Serialize)]
+struct UpdateHostStatusParams<'a> {
+    id: &'a str,
+    status: &'a str,
+    last_seen: &'a str,
+    capabilities_json: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct KnownHostRow {
+    id: String,
+    name: String,
+    tailscale_ip: String,
+    url: String,
+    status: String,
+    last_seen: Option<String>,
+    #[serde(deserialize_with = "deserialize_capabilities")]
+    capabilities: Option<HostCapabilities>,
+}
+
+impl From<KnownHostRow> for KnownHost {
+    fn from(row: KnownHostRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            tailscale_ip: row.tailscale_ip,
+            url: row.url,
+            status: row.status,
+            last_seen: row.last_seen,
+            capabilities: row.capabilities,
+        }
+    }
+}
+
+fn deserialize_capabilities<'de, D>(deserializer: D) -> Result<Option<HostCapabilities>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let caps_json = Option::<String>::deserialize(deserializer)?;
+    caps_json
+        .map(|json| serde_json::from_str(&json).map_err(serde::de::Error::custom))
+        .transpose()
+}
+
+fn to_to_sql_error(err: serde_rusqlite::Error) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(err))
+}
+
+fn to_from_sql_error(err: serde_rusqlite::Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err))
 }
 
 #[cfg(test)]

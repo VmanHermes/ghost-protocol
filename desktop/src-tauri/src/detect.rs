@@ -102,4 +102,3 @@ pub fn detect_tailscale_ip() -> Result<String, String> {
     }
     Ok(ip)
 }
-

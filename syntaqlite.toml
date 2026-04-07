@@ -1,0 +1,14 @@
+schema = ["daemon/schema/latest.sql"]
+
+[schemas]
+"daemon/sql/**/*.sql" = ["daemon/schema/latest.sql"]
+"daemon/migrations/*.sql" = []
+
+[format]
+line-width = 100
+indent-width = 4
+keyword-case = "upper"
+semicolons = true
+
+[checks]
+schema = "deny"

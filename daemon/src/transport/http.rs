@@ -194,6 +194,39 @@ fn build_chat_system_prompt(
     lines.join("\n")
 }
 
+fn build_agent_context_preamble(
+    session: &crate::store::sessions::TerminalSessionRecord,
+    project: Option<&crate::store::projects::ProjectRecord>,
+    daemon_port: u16,
+) -> String {
+    let mut lines = vec![
+        "[Ghost Protocol Context]".to_string(),
+        "You are running inside Ghost Protocol on a Tailscale mesh.".to_string(),
+        format!("Session ID: {}", session.id),
+        format!("Working directory: {}", session.workdir),
+    ];
+
+    if let Some(project) = project {
+        lines.push(format!("Project: {} ({})", project.name, project.workdir));
+    }
+
+    lines.push(String::new());
+    lines.push("You have access to Ghost Protocol tools via HTTP. To call a tool:".to_string());
+    lines.push(format!(
+        "  curl -s -X POST http://127.0.0.1:{daemon_port}/api/ghost/tools/TOOL_NAME -H 'Content-Type: application/json' -d '{{\"key\": \"value\"}}'"
+    ));
+    lines.push(String::new());
+    lines.push("Available tools:".to_string());
+    lines.push("  check_mesh     - Get mesh status (machines, sessions, agents). No arguments.".to_string());
+    lines.push("  list_machines  - List machines with capabilities and permissions. No arguments.".to_string());
+    lines.push("  list_agents    - List available agents across the mesh. No arguments.".to_string());
+    lines.push("  report_outcome - Report work result. Args: {\"category\": \"...\", \"action\": \"...\", \"status\": \"success|failure\"}".to_string());
+    lines.push("  recall         - Search project memory. Args: {\"query\": \"...\"}".to_string());
+    lines.push("  spawn_remote_session - Spawn agent on another machine. Args: {\"targetMachine\": \"...\", \"agentId\": \"...\", \"task\": \"...\"}".to_string());
+
+    lines.join("\n")
+}
+
 fn session_depth(state: &AppState, session: &crate::store::sessions::TerminalSessionRecord) -> usize {
     let mut depth = 0usize;
     let mut current = session.parent_session_id.clone();
@@ -1919,6 +1952,12 @@ async fn create_structured_chat_driver_session(
         ghost_env.insert("GHOST_PROJECT_ID".into(), project.id.clone());
     }
 
+    let context_preamble = if !agent.supports_mcp {
+        Some(build_agent_context_preamble(&session, project.as_ref(), state.bind_port))
+    } else {
+        None
+    };
+
     let now = chrono::Utc::now().to_rfc3339();
     state
         .store
@@ -1938,6 +1977,7 @@ async fn create_structured_chat_driver_session(
                 mcp_config,
                 allowed_tools,
                 ghost_env,
+                context_preamble,
             },
         )
         .await
@@ -1976,6 +2016,9 @@ async fn create_structured_chat_driver_session(
         startup_lines.push("Ghost context loaded for the agent.".to_string());
         startup_lines.push("Ghost MCP configured: ghost-daemon".to_string());
         startup_lines.push("Ghost MCP tools are pre-approved for this chat session.".to_string());
+    } else {
+        startup_lines.push("Ghost context injected via environment variables and preamble.".to_string());
+        startup_lines.push(format!("Ghost tools available via HTTP at http://127.0.0.1:{}/api/ghost/tools/", state.bind_port));
     }
 
     state

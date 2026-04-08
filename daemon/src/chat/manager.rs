@@ -25,6 +25,7 @@ pub struct ChatSessionLaunchConfig {
     pub mcp_config: Option<String>,
     pub allowed_tools: Vec<String>,
     pub ghost_env: HashMap<String, String>,
+    pub context_preamble: Option<String>,
 }
 
 #[derive(Clone)]
@@ -196,6 +197,11 @@ impl ChatProcessManager {
         self.processes
             .lock().await
             .insert(session_id.to_string(), managed);
+
+        // Send context preamble for non-MCP agents before any other input
+        if let Some(preamble) = launch.context_preamble {
+            let _ = stdin_tx.send(format!("{}\n", preamble)).await;
+        }
 
         // Stdin writer task
         let session_id_stdin = session_id.to_string();

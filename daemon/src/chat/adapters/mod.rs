@@ -24,7 +24,7 @@ pub trait ChatAdapter: Send + Sync {
 }
 
 pub fn adapter_for_agent(agent_id: &str) -> Box<dyn ChatAdapter> {
-    if agent_id == "claude-code" || agent_id.starts_with("claude") {
+    if crate::hardware::agents::is_claude_protocol_agent(agent_id) {
         Box::new(claude::ClaudeAdapter::new())
     } else if agent_id.starts_with("ollama:") {
         Box::new(ollama::OllamaAdapter::new())

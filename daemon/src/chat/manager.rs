@@ -415,7 +415,7 @@ impl ChatProcessManager {
 
         let managed = process.lock().await;
 
-        let formatted = if managed.agent_id == "claude-code" || managed.agent_id.starts_with("claude") {
+        let formatted = if crate::hardware::agents::is_claude_protocol_agent(&managed.agent_id) {
             let msg = serde_json::json!({
                 "type": "user",
                 "message": { "role": "user", "content": content }

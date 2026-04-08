@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PendingApprovalRecord, TerminalSession } from "../types";
-import { listApprovals, listChatMessages, resolveApproval } from "../api";
+import { listApprovals, listChatMessages, resolveApproval, sendChatMessage } from "../api";
 
 type Props = {
   daemonUrl: string;
@@ -45,6 +45,7 @@ export function ApprovalsTab({ daemonUrl, activeSession, onPendingCountChange }:
   const [approvals, setApprovals] = useState<PendingApprovalRecord[] | null>(null);
   const [agentApprovalHint, setAgentApprovalHint] = useState<string | null>(null);
   const [resolving, setResolving] = useState<Set<string>>(new Set());
+  const [sendingHintResponse, setSendingHintResponse] = useState(false);
   const prevPendingCount = useRef<number>(-1);
 
   const fetchApprovals = useCallback(async () => {
@@ -113,6 +114,19 @@ export function ApprovalsTab({ daemonUrl, activeSession, onPendingCountChange }:
       clearInterval(timer);
     };
   }, [activeSession, daemonUrl]);
+
+  const handleHintRespond = async (message: string) => {
+    if (!activeSession?.id) return;
+    setSendingHintResponse(true);
+    try {
+      await sendChatMessage(daemonUrl, activeSession.id, message);
+      setAgentApprovalHint(null);
+    } catch {
+      // ignore
+    } finally {
+      setSendingHintResponse(false);
+    }
+  };
 
   const handleResolve = async (id: string, action: "approve" | "deny") => {
     setResolving((prev) => new Set(prev).add(id));
@@ -212,12 +226,29 @@ export function ApprovalsTab({ daemonUrl, activeSession, onPendingCountChange }:
       {agentApprovalHint && (
         <div className="approvals-section">
           <div className="muted">Session hint</div>
-          <div className="approval-card approval-info-card">
+          <div className="approval-card approval-pending">
             <div className="approval-info">
               <div className="approval-action">Agent reported an approval step</div>
               <div className="approval-meta">{agentApprovalHint}</div>
-              <div className="approval-note">This prompt is still coming from the agent runtime, so it needs to be handled inside the session for now.</div>
             </div>
+            {activeSession?.id && (
+              <div className="approval-actions">
+                <button
+                  className="btn-approve"
+                  disabled={sendingHintResponse}
+                  onClick={() => void handleHintRespond("Yes, proceed. You have approval to run the commands.")}
+                >
+                  Approve
+                </button>
+                <button
+                  className="btn-reject"
+                  disabled={sendingHintResponse}
+                  onClick={() => void handleHintRespond("No, do not proceed with that action.")}
+                >
+                  Deny
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

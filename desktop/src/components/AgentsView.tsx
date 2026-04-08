@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   adoptCodeServer,
@@ -12,6 +12,7 @@ import {
   switchSessionMode,
 } from "../api";
 import { useChatSocket } from "../hooks/useChatSocket";
+import { isTauri } from "../lib/platform";
 import { SessionSidebar } from "./SessionSidebar";
 import { SessionHeader } from "./SessionHeader";
 import { ChatRenderer } from "./ChatRenderer";
@@ -70,10 +71,10 @@ export function AgentsView({
   const [selectedTargetId, setSelectedTargetId] = useState("local");
   const [activeMode, setActiveMode] = useState<SessionMode>("chat");
   const [loading, setLoading] = useState(false);
+  const [ideLoading, setIdeLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detectedCodeServers, setDetectedCodeServers] = useState<CodeServerInfo[]>([]);
-  const [showStartCodeServer, setShowStartCodeServer] = useState(false);
-  const [codeServerWorkdir, setCodeServerWorkdir] = useState("");
+  const ideMenuRef = useRef<HTMLDetailsElement>(null);
 
   const activeSessions = sessions.filter((session) => session.status === "running" || session.status === "created");
   const previousSessions = sessions.filter((session) => session.status !== "running" && session.status !== "created");
@@ -100,6 +101,7 @@ export function AgentsView({
       baseUrl: daemonUrl,
       isLocal: true,
       ip: localMachineIp,
+      sshTarget: null,
     },
     ...connections
       .filter((connection) => connection.state === "connected")
@@ -109,6 +111,9 @@ export function AgentsView({
         baseUrl: connection.host.url,
         isLocal: false,
         ip: connection.machineInfo?.tailscaleIp ?? connection.host.url.replace(/^https?:\/\//, "").replace(/:\d+$/, ""),
+        sshTarget: connection.machineInfo?.tailscaleIp && connection.machineInfo.tools.sshUser
+          ? `${connection.machineInfo.tools.sshUser}@${connection.machineInfo.tailscaleIp}`
+          : null,
       })),
   ].map((target) => ({
     ...target,
@@ -224,6 +229,10 @@ export function AgentsView({
     const matchedProject = projects.find((project) => project.workdir === value);
     setSelectedProjectId(matchedProject?.id ?? "");
   }, [projects]);
+
+  const closeIdeMenu = useCallback(() => {
+    ideMenuRef.current?.removeAttribute("open");
+  }, []);
 
   const handleNewSession = useCallback(async () => {
     if (!selectedAgentId || !selectedTarget) return;
@@ -384,6 +393,56 @@ export function AgentsView({
     }
   }, [activeSessionBaseUrl, activeSessionId, isLocalSession, onRefreshSessions, onSelectSession, onTerminateLocalSession]);
 
+  const handleOpenBrowserIde = useCallback(async () => {
+    if (!selectedTarget) return;
+
+    closeIdeMenu();
+    setError(null);
+    setIdeLoading(true);
+
+    try {
+      const session = await createCodeServerSession(
+        launchDaemonUrl,
+        launchWorkdir.trim() || "~",
+        selectedProjectId || undefined,
+      );
+      await onRefreshSessions();
+      onSelectSession(session.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start VS Code in browser");
+    } finally {
+      setIdeLoading(false);
+    }
+  }, [closeIdeMenu, launchDaemonUrl, launchWorkdir, onRefreshSessions, onSelectSession, selectedProjectId, selectedTarget]);
+
+  const handleOpenLocalIde = useCallback(async () => {
+    if (!selectedTarget) return;
+
+    closeIdeMenu();
+    setError(null);
+
+    if (!isTauri()) {
+      setError("Open IDE locally is only available in the desktop app.");
+      return;
+    }
+
+    if (!selectedTarget.isLocal && !selectedTarget.sshTarget) {
+      setError("Remote IDE launch needs SSH details from the selected host.");
+      return;
+    }
+
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_in_vscode", {
+        workdir: launchWorkdir.trim() || "~",
+        sshTarget: selectedTarget.sshTarget ?? null,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Failed to open local VS Code: ${message}`);
+    }
+  }, [closeIdeMenu, launchWorkdir, selectedTarget]);
+
   if (!visible) return null;
 
   const workdirPlaceholder = projects[0]?.workdir ?? "~/projects/my-app";
@@ -442,16 +501,36 @@ export function AgentsView({
           {loading ? "Starting..." : "+ New Session"}
         </button>
 
-        <button
-          className="btn-secondary"
-          style={{ fontSize: "0.78rem" }}
-          onClick={() => {
-            setCodeServerWorkdir("~/");
-            setShowStartCodeServer(true);
-          }}
-        >
-          Start code-server
-        </button>
+        <details className="ide-launch-menu" ref={ideMenuRef}>
+          <summary className="btn-secondary ide-launch-trigger" style={{ fontSize: "0.78rem" }}>
+            Open IDE
+            <span className="ide-launch-caret">▾</span>
+          </summary>
+          <div className="ide-launch-popover">
+            <button
+              type="button"
+              className="ide-launch-option"
+              onClick={() => void handleOpenBrowserIde()}
+              disabled={ideLoading}
+            >
+              <span className="ide-launch-option-title">VS Code in browser</span>
+              <span className="ide-launch-option-meta">Start a `code-server` session for the selected folder.</span>
+            </button>
+            <button
+              type="button"
+              className="ide-launch-option"
+              onClick={() => void handleOpenLocalIde()}
+              disabled={!selectedTarget?.isLocal && !selectedTarget?.sshTarget}
+            >
+              <span className="ide-launch-option-title">VS Code locally</span>
+              <span className="ide-launch-option-meta">
+                {selectedTarget?.isLocal
+                  ? "Open this folder in your local VS Code app."
+                  : "Open a Remote SSH window from local VS Code."}
+              </span>
+            </button>
+          </div>
+        </details>
 
         {error && <span style={{ color: "var(--accent-red)", fontSize: "0.78rem" }}>{error}</span>}
       </div>
@@ -527,46 +606,6 @@ export function AgentsView({
         />
 
         <div className="agents-content">
-          {showStartCodeServer && (
-            <div className="code-server-start-dialog">
-              <div style={{ fontSize: "0.88rem", fontWeight: 600, marginBottom: 8 }}>Start code-server</div>
-              <label style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-                Working directory
-                <PathAutocomplete
-                  value={codeServerWorkdir}
-                  onChange={setCodeServerWorkdir}
-                  baseUrl={launchDaemonUrl}
-                  style={{ width: "100%", marginTop: 4 }}
-                  autoFocus
-                />
-              </label>
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <button
-                  className="btn-primary"
-                  style={{ fontSize: "0.82rem" }}
-                  onClick={async () => {
-                    try {
-                      await createCodeServerSession(launchDaemonUrl, codeServerWorkdir);
-                      setShowStartCodeServer(false);
-                      void onRefreshSessions();
-                    } catch (err) {
-                      console.error("Failed to start code-server:", err);
-                    }
-                  }}
-                >
-                  Start
-                </button>
-                <button
-                  className="btn-secondary"
-                  style={{ fontSize: "0.82rem" }}
-                  onClick={() => setShowStartCodeServer(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
           {activeSession ? (
             <>
               <SessionHeader

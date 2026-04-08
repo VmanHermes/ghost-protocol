@@ -165,8 +165,16 @@ impl ChatProcessManager {
         let stdout = child.stdout.take().ok_or("failed to capture stdout")?;
         let stderr = child.stderr.take().ok_or("failed to capture stderr")?;
 
-        // Stderr reader task
+        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(64);
+
+        let broadcaster = Arc::new(ChatBroadcaster::new());
+        self.broadcasters
+            .lock().await
+            .insert(session_id.to_string(), Arc::clone(&broadcaster));
+
+        // Stderr reader task — relay to chat UI as delta events
         let session_id_err = session_id.to_string();
+        let bc_stderr: Arc<ChatBroadcaster> = Arc::clone(&broadcaster);
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr);
             let mut line = String::new();
@@ -175,19 +183,20 @@ impl ChatProcessManager {
                 match reader.read_line(&mut line).await {
                     Ok(0) => break,
                     Ok(_) => {
-                        warn!(session_id = %session_id_err, stderr = %line.trim(), "chat process stderr");
+                        let trimmed = line.trim().to_string();
+                        warn!(session_id = %session_id_err, stderr = %trimmed, "chat process stderr");
+                        if !trimmed.is_empty() {
+                            bc_stderr.send(ChatEvent::Delta {
+                                session_id: session_id_err.clone(),
+                                message_id: format!("stderr-{}", session_id_err),
+                                delta: format!("{}\n", trimmed),
+                            });
+                        }
                     }
                     Err(_) => break,
                 }
             }
         });
-
-        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(64);
-
-        let broadcaster = Arc::new(ChatBroadcaster::new());
-        self.broadcasters
-            .lock().await
-            .insert(session_id.to_string(), Arc::clone(&broadcaster));
 
         let managed = Arc::new(Mutex::new(ManagedChatProcess {
             child,

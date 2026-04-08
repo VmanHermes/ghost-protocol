@@ -79,10 +79,14 @@ impl Store {
         } else {
             let mut stmt = conn.prepare(
                 "SELECT id, session_id, role, content, created_at
-                 FROM chat_messages
-                 WHERE session_id = ?1
-                 ORDER BY created_at ASC
-                 LIMIT ?2",
+                 FROM (
+                     SELECT id, session_id, role, content, created_at
+                     FROM chat_messages
+                     WHERE session_id = ?1
+                     ORDER BY created_at DESC
+                     LIMIT ?2
+                 )
+                 ORDER BY created_at ASC",
             )?;
             let rows = stmt.query_map(params![session_id, limit as i64], |row| {
                 Ok(ChatMessage {
@@ -207,5 +211,24 @@ mod tests {
         assert_eq!(messages[0].id, "m3");
         assert_eq!(messages[1].id, "m4");
         assert_eq!(messages[2].id, "m5");
+    }
+
+    #[test]
+    fn test_list_messages_without_cursor_returns_latest_window() {
+        let store = test_store();
+        setup_session(&store, "s1");
+
+        store.create_chat_message("m1", "s1", "user", "One").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        store.create_chat_message("m2", "s1", "assistant", "Two").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        store.create_chat_message("m3", "s1", "user", "Three").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        store.create_chat_message("m4", "s1", "assistant", "Four").unwrap();
+
+        let messages = store.list_chat_messages("s1", None, 2).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].id, "m3");
+        assert_eq!(messages[1].id, "m4");
     }
 }

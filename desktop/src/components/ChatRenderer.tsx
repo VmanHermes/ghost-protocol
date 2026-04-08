@@ -16,7 +16,7 @@ export function ChatRenderer({ messages, streamingDelta, streamingMessageId: _st
   const isEnded = status === "exited" || status === "terminated" || status === "error";
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: streamingDelta ? "auto" : "smooth" });
   }, [messages, streamingDelta]);
 
   const handleSend = useCallback(() => {

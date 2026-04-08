@@ -218,8 +218,10 @@ export async function createChatSession(
 export async function listChatMessages(
   daemonUrl: string,
   sessionId: string,
+  limit?: number,
 ): Promise<ChatMessage[]> {
-  return api<ChatMessage[]>(daemonUrl, `/api/chat/sessions/${sessionId}/messages`);
+  const query = limit ? `?limit=${limit}` : "";
+  return api<ChatMessage[]>(daemonUrl, `/api/chat/sessions/${sessionId}/messages${query}`);
 }
 
 export async function sendChatMessage(

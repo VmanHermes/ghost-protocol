@@ -43,6 +43,69 @@ fn pty_kill(state: State<'_, PtyManager>, session_id: String) -> Result<(), Stri
     state.kill(&session_id)
 }
 
+fn expand_local_vscode_workdir(workdir: &str) -> String {
+    if workdir == "~" || workdir.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut path = PathBuf::from(home);
+            if let Some(suffix) = workdir.strip_prefix("~/") {
+                path.push(suffix);
+            }
+            return path.to_string_lossy().into_owned();
+        }
+    }
+
+    workdir.to_string()
+}
+
+fn expand_remote_vscode_workdir(workdir: &str, ssh_target: &str) -> String {
+    if workdir == "~" || workdir.starts_with("~/") {
+        let ssh_user = ssh_target.split('@').next().unwrap_or_default();
+        let home = if ssh_user == "root" {
+            "/root".to_string()
+        } else if !ssh_user.is_empty() {
+            format!("/home/{ssh_user}")
+        } else {
+            "~".to_string()
+        };
+
+        if let Some(suffix) = workdir.strip_prefix("~/") {
+            return format!("{home}/{suffix}");
+        }
+        return home;
+    }
+
+    workdir.to_string()
+}
+
+fn build_vscode_args(workdir: &str, ssh_target: Option<&str>) -> Vec<String> {
+    let mut args = vec!["-n".to_string()];
+
+    if let Some(ssh_target) = ssh_target.filter(|value| !value.trim().is_empty()) {
+        args.push("--remote".to_string());
+        args.push(format!("ssh-remote+{ssh_target}"));
+        args.push(expand_remote_vscode_workdir(workdir, ssh_target));
+    } else {
+        args.push(expand_local_vscode_workdir(workdir));
+    }
+
+    args
+}
+
+#[tauri::command]
+fn open_in_vscode(
+    app: tauri::AppHandle,
+    workdir: String,
+    ssh_target: Option<String>,
+) -> Result<(), String> {
+    let args = build_vscode_args(&workdir, ssh_target.as_deref());
+    app.shell()
+        .command("code")
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to open VS Code: {e}"))
+}
+
 fn resolve_daemon_bind_hosts(
     configured_bind_hosts: Option<&str>,
     detected_tailscale_ip: Option<&str>,
@@ -133,6 +196,7 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            open_in_vscode,
             detect::detect_tmux,
             detect::detect_tailscale,
             detect::detect_daemon,
@@ -256,8 +320,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEV_DAEMON_DB_RELATIVE_PATH, configured_daemon_db_path, default_dev_daemon_db_path,
-        resolve_daemon_bind_hosts,
+        DEV_DAEMON_DB_RELATIVE_PATH, build_vscode_args, configured_daemon_db_path,
+        default_dev_daemon_db_path, resolve_daemon_bind_hosts,
     };
     use std::path::{Path, PathBuf};
 
@@ -300,5 +364,33 @@ mod tests {
     #[test]
     fn dev_db_path_points_to_repo_dev_data_dir() {
         assert!(default_dev_daemon_db_path().ends_with(Path::new(DEV_DAEMON_DB_RELATIVE_PATH)));
+    }
+
+    #[test]
+    fn builds_local_vscode_args() {
+        let args = build_vscode_args("/tmp/project", None);
+        assert_eq!(args, vec!["-n", "/tmp/project"]);
+    }
+
+    #[test]
+    fn builds_remote_vscode_args() {
+        let args = build_vscode_args("/tmp/project", Some("vman@100.64.0.10"));
+        assert_eq!(args, vec![
+            "-n",
+            "--remote",
+            "ssh-remote+vman@100.64.0.10",
+            "/tmp/project",
+        ]);
+    }
+
+    #[test]
+    fn expands_remote_home_paths_from_ssh_target() {
+        let args = build_vscode_args("~/project", Some("vman@100.64.0.10"));
+        assert_eq!(args, vec![
+            "-n",
+            "--remote",
+            "ssh-remote+vman@100.64.0.10",
+            "/home/vman/project",
+        ]);
     }
 }

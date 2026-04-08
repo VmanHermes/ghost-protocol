@@ -62,25 +62,40 @@ impl LogBuffer {
 
 // --- Tracing integration ---
 
-/// Visitor that extracts the message field from a tracing event.
+/// Visitor that extracts the message field and any extra structured fields from
+/// a tracing event so they appear together in the log buffer.
 #[derive(Default)]
 struct MessageVisitor {
     message: String,
+    extra: Vec<String>,
+}
+
+impl MessageVisitor {
+    fn into_message(self) -> String {
+        if self.extra.is_empty() {
+            return self.message;
+        }
+        if self.message.is_empty() {
+            return self.extra.join(", ");
+        }
+        format!("{} — {}", self.message, self.extra.join(", "))
+    }
 }
 
 impl Visit for MessageVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         if field.name() == "message" {
             self.message = format!("{:?}", value);
-        } else if self.message.is_empty() {
-            // Fallback: use first field as message
-            self.message = format!("{} = {:?}", field.name(), value);
+        } else {
+            self.extra.push(format!("{}={:?}", field.name(), value));
         }
     }
 
     fn record_str(&mut self, field: &Field, value: &str) {
         if field.name() == "message" {
             self.message = value.to_string();
+        } else {
+            self.extra.push(format!("{}={}", field.name(), value));
         }
     }
 }
@@ -101,7 +116,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogBufferLayer {
 
         self.buffer.push(LogEntry {
             level: event.metadata().level().to_string(),
-            message: visitor.message,
+            message: visitor.into_message(),
             timestamp: Utc::now().to_rfc3339(),
             source: event.metadata().target().to_string(),
         });

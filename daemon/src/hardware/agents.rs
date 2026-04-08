@@ -43,13 +43,23 @@ pub fn detect_agents() -> Vec<AgentInfo> {
         });
     }
 
-    // Hermes
-    if which("hermes").is_some() {
+    // Hermes — needs `chat -Q` for quiet/programmatic piped I/O
+    if let Some(version) = detect_cli_version("hermes", &["version"]) {
         agents.push(AgentInfo {
             id: "hermes".into(),
             name: "Hermes".into(),
             agent_type: "cli".into(),
-            command: "hermes".into(),
+            command: "hermes chat -Q".into(),
+            version: Some(version),
+            persistent: false,
+            supports_mcp: false,
+        });
+    } else if which("hermes").is_some() {
+        agents.push(AgentInfo {
+            id: "hermes".into(),
+            name: "Hermes".into(),
+            agent_type: "cli".into(),
+            command: "hermes chat -Q".into(),
             version: None,
             persistent: false,
             supports_mcp: false,

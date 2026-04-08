@@ -1815,6 +1815,41 @@ textarea { resize: vertical; }
 .agents-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .agents-topbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
 .agents-topbar select { min-width: 200px; }
+.ide-launch-menu { position: relative; }
+.ide-launch-trigger { display: inline-flex; align-items: center; gap: 6px; list-style: none; }
+.ide-launch-trigger::-webkit-details-marker { display: none; }
+.ide-launch-menu[open] .ide-launch-trigger { border-color: var(--border-hover); background: var(--bg-elevated); }
+.ide-launch-caret { font-size: 0.7rem; color: var(--text-muted); }
+.ide-launch-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 260px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 30;
+}
+.ide-launch-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.ide-launch-option:hover:not(:disabled) { background: var(--bg-input); }
+.ide-launch-option:disabled { opacity: 0.45; cursor: not-allowed; }
+.ide-launch-option-title { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+.ide-launch-option-meta { font-size: 0.75rem; color: var(--text-muted); line-height: 1.35; }
 .agents-launchbar { display: flex; align-items: end; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: rgba(255, 255, 255, 0.35); }
 .agents-launch-field { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
 .agents-launch-field span { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -1932,11 +1967,4 @@ textarea { resize: vertical; }
   align-items: center;
   gap: 8px;
   font-size: 0.82rem;
-}
-.code-server-start-dialog {
-  padding: 16px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  margin: 8px 0;
 }

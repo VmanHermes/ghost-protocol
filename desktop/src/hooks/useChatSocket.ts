@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { wsUrlFromHttp } from "../api";
+import { listChatMessages, wsUrlFromHttp } from "../api";
 import type { ChatMessage } from "../types";
 
 export type UseChatSocketOptions = {
@@ -25,6 +25,18 @@ export type UseChatSocketReturn = {
   sendMessage: (content: string) => void;
 };
 
+type CachedChatSession = {
+  messages: ChatMessage[];
+  tokens: number | null;
+  contextPct: number | null;
+};
+
+const DEFAULT_META: ChatSessionMeta = {
+  tokens: null,
+  contextPct: null,
+  status: "idle",
+};
+
 function mergeStreamingText(current: string, incoming: string): string {
   if (!incoming) return current;
   if (!current) return incoming;
@@ -41,6 +53,17 @@ function mergeStreamingText(current: string, incoming: string): string {
   return current + incoming;
 }
 
+function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  if (incoming.length === 0) return current;
+
+  const merged = new Map(current.map((message) => [message.id, message]));
+  for (const message of incoming) {
+    merged.set(message.id, message);
+  }
+
+  return [...merged.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 export function useChatSocket({
   baseUrl,
   sessionId,
@@ -51,24 +74,66 @@ export function useChatSocket({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamingDelta, setStreamingDelta] = useState("");
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
-  const [meta, setMeta] = useState<ChatSessionMeta>({
-    tokens: null, contextPct: null, status: "idle",
-  });
+  const [meta, setMeta] = useState<ChatSessionMeta>(DEFAULT_META);
   const [isConnected, setIsConnected] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = useRef(500);
   const streamingMessageIdRef = useRef<string | null>(null);
+  const sessionCacheRef = useRef<Map<string, CachedChatSession>>(new Map());
+  const sessionKey = sessionId ? `${baseUrl}::${sessionId}` : null;
 
-  // Reset state when session changes
   useEffect(() => {
-    setMessages([]);
+    if (!sessionKey) {
+      setMessages([]);
+      setStreamingDelta("");
+      setStreamingMessageId(null);
+      streamingMessageIdRef.current = null;
+      setMeta(DEFAULT_META);
+      return;
+    }
+
+    const cached = sessionCacheRef.current.get(sessionKey);
+    setMessages(cached?.messages ?? []);
     setStreamingDelta("");
     setStreamingMessageId(null);
     streamingMessageIdRef.current = null;
-    setMeta({ tokens: null, contextPct: null, status: "idle" });
-  }, [sessionId]);
+    setMeta({
+      tokens: cached?.tokens ?? null,
+      contextPct: cached?.contextPct ?? null,
+      status: "idle",
+    });
+  }, [sessionKey]);
+
+  useEffect(() => {
+    if (!sessionKey) return;
+    sessionCacheRef.current.set(sessionKey, {
+      messages,
+      tokens: meta.tokens,
+      contextPct: meta.contextPct,
+    });
+  }, [messages, meta.contextPct, meta.tokens, sessionKey]);
+
+  useEffect(() => {
+    if (!isActive || !sessionId) return;
+
+    let cancelled = false;
+
+    listChatMessages(baseUrl, sessionId, 500)
+      .then((history) => {
+        if (cancelled) return;
+        setMessages((prev) => mergeMessages(prev, history));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        onError?.(error instanceof Error ? error.message : String(error));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, isActive, onError, sessionId]);
 
   useEffect(() => {
     if (!isActive || !sessionId) return;
@@ -96,10 +161,7 @@ export function useChatSocket({
         switch (data.op) {
           case "chat_message":
             if (data.message) {
-              setMessages((prev) => {
-                if (prev.some((m) => m.id === data.message.id)) return prev;
-                return [...prev, data.message];
-              });
+              setMessages((prev) => mergeMessages(prev, [data.message]));
               setStreamingDelta("");
               setStreamingMessageId(null);
               streamingMessageIdRef.current = null;
@@ -176,10 +238,7 @@ export function useChatSocket({
       })
         .then((res) => res.json())
         .then((msg: ChatMessage) => {
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === msg.id)) return prev;
-            return [...prev, msg];
-          });
+          setMessages((prev) => mergeMessages(prev, [msg]));
         })
         .catch((e) => onError?.(e.message));
     },

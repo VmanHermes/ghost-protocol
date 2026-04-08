@@ -11,6 +11,20 @@ pub struct AgentInfo {
     pub version: Option<String>,
     #[serde(default)]
     pub persistent: bool,
+    #[serde(default)]
+    pub supports_mcp: bool,
+}
+
+impl AgentInfo {
+    /// Whether this agent speaks Claude Code's stream-JSON protocol
+    /// (--input-format stream-json, --mcp-config, --allowedTools, etc.)
+    pub fn uses_claude_protocol(&self) -> bool {
+        self.id == "claude-code" || self.id.starts_with("claude")
+    }
+}
+
+pub fn is_claude_protocol_agent(agent_id: &str) -> bool {
+    agent_id == "claude-code" || agent_id.starts_with("claude")
 }
 
 pub fn detect_agents() -> Vec<AgentInfo> {
@@ -25,6 +39,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             command: "claude".into(),
             version: Some(version),
             persistent: true,
+            supports_mcp: true,
         });
     }
 
@@ -37,6 +52,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             command: "hermes".into(),
             version: None,
             persistent: false,
+            supports_mcp: false,
         });
     }
 
@@ -49,6 +65,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             command: "aider".into(),
             version: Some(version),
             persistent: false,
+            supports_mcp: false,
         });
     }
 
@@ -61,6 +78,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
             command: "openclaw".into(),
             version: None,
             persistent: false,
+            supports_mcp: false,
         });
     }
 
@@ -74,6 +92,7 @@ pub fn detect_agents() -> Vec<AgentInfo> {
                 command: format!("ollama run {model}"),
                 version: None,
                 persistent: false,
+                supports_mcp: false,
             });
         }
     }

@@ -143,9 +143,6 @@ fn ghost_mcp_allowed_tools(tier: PeerTier) -> Vec<String> {
         })
         .collect();
 
-    // Only pre-approve standard Claude Code tools for full-access sessions
-    // (localhost or explicitly trusted peers). Approval-required peers keep
-    // agent-level tool prompts as an additional safety layer.
     if tier == PeerTier::FullAccess {
         let cc_tools = [
             "Bash", "Read", "Write", "Edit", "Glob", "Grep",
@@ -1903,20 +1900,13 @@ async fn create_structured_chat_driver_session(
         .project_id
         .as_deref()
         .and_then(|project_id| state.store.get_project(project_id).ok().flatten());
-    let mcp_config = if agent.id == "claude-code" || agent.id.starts_with("claude") {
-        build_ghost_mcp_config(state.bind_port)
+    let (mcp_config, system_prompt, allowed_tools) = if agent.supports_mcp {
+        let mcp = build_ghost_mcp_config(state.bind_port);
+        let prompt = Some(build_chat_system_prompt(&session, project.as_ref(), mcp.is_some()));
+        let tools = ghost_mcp_allowed_tools(tier);
+        (mcp, prompt, tools)
     } else {
-        None
-    };
-    let system_prompt = if agent.id == "claude-code" || agent.id.starts_with("claude") {
-        Some(build_chat_system_prompt(&session, project.as_ref(), mcp_config.is_some()))
-    } else {
-        None
-    };
-    let allowed_tools = if agent.id == "claude-code" || agent.id.starts_with("claude") {
-        ghost_mcp_allowed_tools(tier)
-    } else {
-        Vec::new()
+        (None, None, Vec::new())
     };
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -1971,7 +1961,7 @@ async fn create_structured_chat_driver_session(
     if let Some(project) = project.as_ref() {
         startup_lines.push(format!("Ghost project: {}", project.name));
     }
-    if agent.id == "claude-code" || agent.id.starts_with("claude") {
+    if agent.supports_mcp {
         startup_lines.push("Ghost context loaded for the agent.".to_string());
         startup_lines.push("Ghost MCP configured: ghost-daemon".to_string());
         startup_lines.push("Ghost MCP tools are pre-approved for this chat session.".to_string());

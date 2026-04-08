@@ -89,7 +89,7 @@ export function ApprovalsTab({ daemonUrl, activeSession, onPendingCountChange }:
         const match = [...messages]
           .reverse()
           .find((message) => (
-            (message.role === "assistant" || message.role === "system")
+            message.role === "assistant"
             && APPROVAL_HINT_RE.test(message.content)
           ));
 

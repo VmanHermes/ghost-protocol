@@ -2994,3 +2994,35 @@ pub async fn recall_memories(
     let result = crate::intelligence::retrieval::recall(&state.store, &query, None);
     axum::Json(result)
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/ghost/tools/{name}
+// ---------------------------------------------------------------------------
+
+pub async fn call_ghost_tool_proxy(
+    _tier: RequireReadOnly,
+    State(state): State<AppState>,
+    Path(tool_name): Path<String>,
+    Json(arguments): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let builder = crate::mcp::resources::ResourceBuilder::new(state.bind_port);
+    let prefixed = format!("ghost_{tool_name}");
+
+    match crate::mcp::transport::call_tool(&builder, &prefixed, &arguments).await {
+        Ok(result) => Ok(Json(serde_json::json!({ "result": result }))),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("unknown tool") {
+                Err((
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": msg })),
+                ))
+            } else {
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": msg })),
+                ))
+            }
+        }
+    }
+}

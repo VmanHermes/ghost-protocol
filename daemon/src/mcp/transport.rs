@@ -281,7 +281,7 @@ fn tool_definitions() -> Value {
     ])
 }
 
-async fn call_tool(
+pub async fn call_tool(
     builder: &ResourceBuilder,
     name: &str,
     arguments: &Value,

@@ -24,6 +24,7 @@ pub struct ChatSessionLaunchConfig {
     pub system_prompt: Option<String>,
     pub mcp_config: Option<String>,
     pub allowed_tools: Vec<String>,
+    pub ghost_env: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -141,6 +142,7 @@ impl ChatProcessManager {
         let mut child = Command::new(&program)
             .args(&args)
             .current_dir(&workdir)
+            .envs(&launch.ghost_env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

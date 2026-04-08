@@ -1909,6 +1909,16 @@ async fn create_structured_chat_driver_session(
         (None, None, Vec::new())
     };
 
+    let mut ghost_env = std::collections::HashMap::new();
+    ghost_env.insert("GHOST_SESSION_ID".into(), id.clone());
+    ghost_env.insert("GHOST_DAEMON_URL".into(), format!("http://127.0.0.1:{}", state.bind_port));
+    ghost_env.insert("GHOST_WORKDIR".into(), workdir.clone());
+    ghost_env.insert("GHOST_AGENT_ID".into(), body.agent_id.clone());
+    if let Some(project) = project.as_ref() {
+        ghost_env.insert("GHOST_PROJECT".into(), project.name.clone());
+        ghost_env.insert("GHOST_PROJECT_ID".into(), project.id.clone());
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
     state
         .store
@@ -1927,6 +1937,7 @@ async fn create_structured_chat_driver_session(
                 system_prompt,
                 mcp_config,
                 allowed_tools,
+                ghost_env,
             },
         )
         .await

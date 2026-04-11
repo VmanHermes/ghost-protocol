@@ -340,3 +340,20 @@ export async function listDirs(
     `/api/fs/list-dirs?path=${encodeURIComponent(path)}`,
   );
 }
+
+export async function getClaudeSetupStatus(
+  daemonUrl: string,
+): Promise<{ configured: boolean }> {
+  return api<{ configured: boolean }>(daemonUrl, "/api/setup/claude/status");
+}
+
+export async function setupClaude(
+  daemonUrl: string,
+  body: { apiKey?: string; authToken?: string; baseUrl?: string },
+): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(daemonUrl, "/api/setup/claude", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}

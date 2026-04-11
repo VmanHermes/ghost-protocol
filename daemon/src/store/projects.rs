@@ -16,6 +16,51 @@ pub struct ProjectRecord {
 }
 
 impl Store {
+    /// Look up a project by workdir; if none exists, auto-create one with defaults.
+    /// If `config_json_override` is provided (e.g. from a `.ghost/config.json` file),
+    /// use that instead of generating a minimal default config.
+    pub fn get_or_create_project_for_workdir(
+        &self,
+        workdir: &str,
+        config_json_override: Option<&str>,
+    ) -> Result<ProjectRecord, rusqlite::Error> {
+        if let Some(existing) = self.get_project_by_workdir(workdir)? {
+            return Ok(existing);
+        }
+
+        let name = std::path::Path::new(workdir)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string();
+
+        let config_json = match config_json_override {
+            Some(json) => json.to_string(),
+            None => serde_json::json!({
+                "name": name,
+                "workdir": workdir,
+                "agents": [],
+                "machines": {},
+                "commands": { "build": null, "test": null, "lint": null, "deploy": null },
+                "environment": {},
+                "experimentalMultiAgent": false,
+                "allowedDriverKinds": ["terminal_driver", "structured_chat_driver", "api_driver"],
+                "defaultSkillSet": [],
+                "delegationLimits": {
+                    "maxDepth": 2,
+                    "maxChildren": 4,
+                    "budgetTokens": null,
+                    "budgetSecs": 900
+                },
+                "communicationPolicy": "supervisor_mailbox"
+            })
+            .to_string(),
+        };
+
+        let id = uuid::Uuid::new_v4().to_string();
+        self.create_project(&id, &name, workdir, &config_json)
+    }
+
     pub fn create_project(
         &self,
         id: &str,
@@ -189,6 +234,44 @@ mod tests {
         assert_eq!(projects[0].name, "alpha-app");
         assert_eq!(projects[1].name, "middle-app");
         assert_eq!(projects[2].name, "zebra-app");
+    }
+
+    #[test]
+    fn test_get_or_create_for_workdir_creates_new() {
+        let store = test_store();
+        let result = store
+            .get_or_create_project_for_workdir("/home/user/my-app", None)
+            .unwrap();
+        assert_eq!(result.name, "my-app");
+        assert_eq!(result.workdir, "/home/user/my-app");
+        // Should parse as valid JSON
+        let config: serde_json::Value = serde_json::from_str(&result.config_json).unwrap();
+        assert_eq!(config["name"], "my-app");
+    }
+
+    #[test]
+    fn test_get_or_create_for_workdir_returns_existing() {
+        let store = test_store();
+        store
+            .create_project("p1", "existing-app", "/home/user/my-app", r#"{"name":"existing-app"}"#)
+            .unwrap();
+        let result = store
+            .get_or_create_project_for_workdir("/home/user/my-app", None)
+            .unwrap();
+        assert_eq!(result.id, "p1");
+        assert_eq!(result.name, "existing-app");
+    }
+
+    #[test]
+    fn test_get_or_create_with_custom_config() {
+        let store = test_store();
+        let config = r#"{"name":"custom","workdir":"/home/user/custom"}"#;
+        let result = store
+            .get_or_create_project_for_workdir("/home/user/custom", Some(config))
+            .unwrap();
+        assert_eq!(result.name, "custom");
+        let parsed: serde_json::Value = serde_json::from_str(&result.config_json).unwrap();
+        assert_eq!(parsed["name"], "custom");
     }
 
     #[test]

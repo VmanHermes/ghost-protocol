@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::resources::ResourceBuilder;
@@ -235,7 +235,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "ghost_list_agents",
-            "description": "List available agent runtimes across the mesh. Shows which agents (Claude Code, Ollama models, Hermes, etc.) are available on which machines.",
+            "description": "List available agent runtimes across the mesh. Shows which agents (Hermes, Ollama models, Claude Code, etc.) are available on which machines.",
             "inputSchema": { "type": "object", "properties": {}, "required": [] }
         },
         {
@@ -245,7 +245,7 @@ fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "targetMachine": { "type": "string", "description": "Name or IP of the target machine" },
-                    "agentId": { "type": "string", "description": "Agent ID to spawn (e.g., 'claude-code', 'ollama:llama3')" },
+                    "agentId": { "type": "string", "description": "Agent ID to spawn (e.g., 'hermes', 'ollama:gemma4')" },
                     "task": { "type": "string", "description": "Task description / initial message for the agent" },
                     "workdir": { "type": "string", "description": "Working directory on the remote machine" }
                 },
@@ -317,7 +317,10 @@ pub async fn call_tool(
             Ok(serde_json::to_string_pretty(&data)?)
         }
         "ghost_spawn_remote_session" => {
-            let target_machine = arguments["targetMachine"].as_str().unwrap_or("").to_string();
+            let target_machine = arguments["targetMachine"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
             let agent_id = arguments["agentId"].as_str().unwrap_or("").to_string();
             let task = arguments["task"].as_str().unwrap_or("").to_string();
             let workdir = arguments["workdir"].as_str().map(|s| s.to_string());
@@ -386,7 +389,10 @@ pub async fn call_tool(
 
             // Send the initial task message
             let msg_resp = client
-                .post(format!("{}/api/chat/sessions/{}/message", host_url, session_id))
+                .post(format!(
+                    "{}/api/chat/sessions/{}/message",
+                    host_url, session_id
+                ))
                 .json(&json!({ "content": task }))
                 .send()
                 .await

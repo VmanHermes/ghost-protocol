@@ -161,7 +161,7 @@ fn build_chat_system_prompt(
     mcp_attached: bool,
 ) -> String {
     let mut lines = vec![
-        "You are running inside Ghost Protocol, a secure supervisor and desktop harness for agent sessions across a Tailscale mesh.".to_string(),
+        "You are running inside Ghost Protocol, a secure supervisor and control plane for agent sessions across a Tailscale mesh.".to_string(),
         "Use the Ghost context provided by this session when answering questions about Ghost Protocol, mesh routing, projects, approvals, observability, or available agents.".to_string(),
         format!("Current Ghost work session id: {}", session.id),
         format!("Current working directory: {}", session.workdir),
@@ -1890,6 +1890,14 @@ async fn create_structured_chat_driver_session(
         .ok_or_else(|| format!("agent '{}' not found", body.agent_id))?
         .clone();
 
+    if !agent.launch_supported {
+        let reason = agent
+            .launch_note
+            .clone()
+            .unwrap_or_else(|| format!("agent '{}' is not available for Ghost-managed chat", agent.id));
+        return Err(format!("agent '{}' is unavailable: {}", body.agent_id, reason));
+    }
+
     let workdir = crate::workdir::expand_workdir(
         body.workdir.as_deref().unwrap_or(&default_workdir()),
     );
@@ -1950,6 +1958,11 @@ async fn create_structured_chat_driver_session(
     if let Some(project) = project.as_ref() {
         ghost_env.insert("GHOST_PROJECT".into(), project.name.clone());
         ghost_env.insert("GHOST_PROJECT_ID".into(), project.id.clone());
+    }
+    if agent.id == "claude-code" {
+        for (key, value) in crate::hardware::agents::resolve_managed_claude_launch().env {
+            ghost_env.insert(key, value);
+        }
     }
 
     let context_preamble = if !agent.supports_mcp {

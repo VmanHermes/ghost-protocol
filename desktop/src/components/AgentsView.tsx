@@ -75,6 +75,15 @@ export function AgentsView({
   const [error, setError] = useState<string | null>(null);
   const [detectedCodeServers, setDetectedCodeServers] = useState<CodeServerInfo[]>([]);
   const ideMenuRef = useRef<HTMLDetailsElement>(null);
+  const launchableAgents = useMemo(
+    () => agents.filter((agent) => agent.launchSupported !== false),
+    [agents],
+  );
+  const manualOnlyAgents = useMemo(
+    () => agents.filter((agent) => agent.launchSupported === false),
+    [agents],
+  );
+  const claudeLaunchNote = manualOnlyAgents.find((agent) => agent.id === "claude-code")?.launchNote ?? null;
 
   const activeSessions = sessions.filter((session) => session.status === "running" || session.status === "created");
   const previousSessions = sessions.filter((session) => session.status !== "running" && session.status !== "created");
@@ -137,10 +146,11 @@ export function AgentsView({
       .then((items) => {
         if (cancelled) return;
         setAgents(items);
+        const launchable = items.filter((agent) => agent.launchSupported !== false);
         setSelectedAgentId((current) => {
           if (current === "shell") return current;
-          if (current && items.some((agent) => agent.id === current)) return current;
-          return items[0]?.id ?? "shell";
+          if (current && launchable.some((agent) => agent.id === current)) return current;
+          return launchable[0]?.id ?? "shell";
         });
       })
       .catch(() => {
@@ -468,9 +478,14 @@ export function AgentsView({
           onChange={(e) => setSelectedAgentId(e.target.value || null)}
         >
           <option value="shell">{selectedTarget?.isLocal ? "Shell (local)" : "Shell"}</option>
-          {agents.map((agent) => (
+          {launchableAgents.map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name} {agent.version ? `v${agent.version}` : ""} ({agent.agentType})
+            </option>
+          ))}
+          {manualOnlyAgents.map((agent) => (
+            <option key={agent.id} value={agent.id} disabled>
+              {agent.name} (manual only)
             </option>
           ))}
         </select>
@@ -534,6 +549,12 @@ export function AgentsView({
 
         {error && <span style={{ color: "var(--accent-red)", fontSize: "0.78rem" }}>{error}</span>}
       </div>
+
+      {claudeLaunchNote && (
+        <div style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
+          Claude Code remains available directly with Ghost MCP. {claudeLaunchNote}
+        </div>
+      )}
 
       <div className="agents-launchbar">
         <label className="agents-launch-field">

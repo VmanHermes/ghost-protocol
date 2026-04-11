@@ -14,7 +14,7 @@ Ghost Protocol is a multi-machine AI agent control plane built on Tailscale. You
 - **Auto-discovery** — finds Ghost Protocol peers on your Tailscale mesh automatically
 - **Connections** — sidebar shows all machines sorted by state (connected/offline)
 - **Terminals** — create and share terminal sessions across machines, persisted via tmux
-- **Agent chat** — discover available AI agents (Claude Code, Hermes, Ollama, Aider, OpenClaw) and chat with them
+- **Agent chat** — discover available AI runtimes (Hermes, Ollama, Aider, OpenClaw, custom agents) and start Ghost-managed sessions; Claude Code integrates via Ghost MCP
 - **Permissions** — 4 tiers per machine: full-access, approval-required, read-only, no-access
 - **Approval flow** — write operations from guarded peers queue for your approval with 120s timeout
 - **Outcome log** — agents report work results, daemon auto-captures terminal lifecycle
@@ -140,17 +140,19 @@ ghost-protocol
 ghost status
 ghost agents
 ghost init        # in a project directory
-ghost chat claude-code
+ghost setup claude
+ghost chat hermes
 ```
 
 ## Ghost CLI
 
 ```bash
 ghost init          # Initialize a project — creates .ghost/config.json, registers with daemon
+ghost setup claude  # Configure machine-local auth for Ghost-managed Claude Code
 ghost status        # Mesh overview: machines, online count
 ghost agents        # List detected agents on this machine
 ghost projects      # List registered projects
-ghost chat <agent>  # Start a chat with an agent (e.g., ghost chat claude-code)
+ghost chat <agent>  # Start a chat with an agent (e.g., ghost chat hermes)
 ghost help          # Show available commands
 ```
 

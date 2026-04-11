@@ -288,6 +288,8 @@ export type AgentInfo = {
   command: string;
   version: string | null;
   persistent: boolean;
+  launchSupported?: boolean;
+  launchNote?: string | null;
 };
 
 export type ProjectRecord = {

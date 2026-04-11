@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
@@ -154,11 +154,7 @@ async fn test_health_and_system_status() {
     with_daemon(|base| async move {
         let client = reqwest::Client::new();
 
-        let resp = client
-            .get(format!("{base}/health"))
-            .send()
-            .await
-            .unwrap();
+        let resp = client.get(format!("{base}/health")).send().await.unwrap();
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["ok"], true);
 
@@ -199,9 +195,7 @@ async fn test_session_exit_code_captured() {
         // Give the shell a moment to start, then send an exit command
         tokio::time::sleep(Duration::from_millis(500)).await;
         let resp = client
-            .post(format!(
-                "{base}/api/terminal/sessions/{session_id}/input"
-            ))
+            .post(format!("{base}/api/terminal/sessions/{session_id}/input"))
             .json(&json!({ "input": "exit 42" }))
             .send()
             .await
@@ -231,10 +225,7 @@ async fn test_session_exit_code_captured() {
             session["status"], "error",
             "non-zero exit should set status to error"
         );
-        assert_eq!(
-            session["exitCode"], 42,
-            "exit code should be captured"
-        );
+        assert_eq!(session["exitCode"], 42, "exit code should be captured");
         assert!(
             session["finishedAt"].is_string(),
             "finishedAt should be set"
@@ -281,9 +272,7 @@ async fn test_session_clean_exit_code_zero() {
         // Give the shell a moment to start, then send an exit command
         tokio::time::sleep(Duration::from_millis(500)).await;
         let resp = client
-            .post(format!(
-                "{base}/api/terminal/sessions/{session_id}/input"
-            ))
+            .post(format!("{base}/api/terminal/sessions/{session_id}/input"))
             .json(&json!({ "input": "exit 0" }))
             .send()
             .await

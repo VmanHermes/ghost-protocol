@@ -22,7 +22,7 @@ The name isn't just a name — it maps to how the system works:
 
 ## What this looks like in practice
 
-You open Ghost Protocol on your laptop. The sidebar shows your desktop and home server are online. You pick Hermes on the desktop (it has the GPU) and ask it to refactor a module. While it works, you start Claude Code on your laptop for a different task. Both sessions are visible, both report outcomes, and both contribute to a shared memory that the next session draws from.
+You open Ghost Protocol on your laptop. The sidebar shows your desktop and home server are online. You pick Hermes on the desktop (it has the GPU) and ask it to refactor a module. While it works, you start Claude Code on your laptop for a different task with Ghost's MCP server attached. Both sessions are visible, both report outcomes, and both contribute to a shared memory that the next session draws from.
 
 When you open a new session tomorrow, the agent already knows: "Last time we worked on the auth module, the team decided to use session tokens stored server-side for compliance reasons." That context came from the intelligence layer, which quietly extracted it from yesterday's session transcript.
 
@@ -30,7 +30,7 @@ No manual context sharing. No "let me catch you up." The mesh remembers.
 
 ## Design principles
 
-- **Agent-agnostic.** Ghost Protocol doesn't replace your agents — it discovers and wraps whatever's installed: Claude Code, Hermes, Ollama, Aider, or anything you register. The value is in the orchestration layer, not in being yet another AI runtime.
+- **Agent-agnostic.** Ghost Protocol doesn't replace your agents — it discovers and supervises whatever's installed: Claude Code, Hermes, Ollama, Aider, or anything you register. The value is in the orchestration layer, not in being yet another AI runtime.
 
 - **Daemon is the source of truth.** Every machine runs a lightweight Rust daemon that owns its local state — sessions, outcomes, agent detection, permissions. The desktop app is a thin client. The CLI is a thin client. Agents interact through MCP tools. Everything flows through the daemon.
 

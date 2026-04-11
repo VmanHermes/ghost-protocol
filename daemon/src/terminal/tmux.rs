@@ -42,12 +42,7 @@ pub fn new_session(session_id: &str, workdir: &str, shell: &str) -> Result<(), S
     }
 
     // Configure the session
-    for (option, value) in [
-        ("status", "off"),
-        ("pane-border-status", "off"),
-        ("mouse", "off"),
-        ("remain-on-exit", "off"),
-    ] {
+    for (option, value) in session_options() {
         let set_output = Command::new("tmux")
             .args(["set-option", "-t", &name, option, value])
             .output()
@@ -143,6 +138,53 @@ pub fn list_ghost_sessions() -> Vec<String> {
     }
 }
 
+/// Returns the tmux session options to set after creation.
+pub fn session_options() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("status", "off"),
+        ("pane-border-status", "off"),
+        ("mouse", "off"),
+        ("remain-on-exit", "on"),
+    ]
+}
+
+/// Parses the raw output from `tmux display-message -p '#{pane_dead_status}'`.
+pub fn parse_pane_status(raw: &str) -> Option<i32> {
+    raw.trim().parse::<i32>().ok()
+}
+
+/// Queries the exit code of the (dead) pane in a tmux session.
+/// Returns `None` if the pane is still alive, the session doesn't exist,
+/// or the exit code can't be read.
+pub fn pane_exit_code(session_id: &str) -> Option<i32> {
+    let name = session_name(session_id);
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", &name, "-p", "#{pane_dead_status}"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_pane_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Checks whether the pane inside a tmux session has exited (is dead).
+pub fn is_pane_dead(session_id: &str) -> bool {
+    let name = session_name(session_id);
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", &name, "-p", "#{pane_dead}"])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).trim() == "1"
+        }
+        _ => false,
+    }
+}
+
 /// Checks whether tmux is available on the system.
 pub fn is_available() -> bool {
     let output = Command::new("tmux")
@@ -188,5 +230,24 @@ mod tests {
             "-t",
             "ghost-550e8400e29b41d4a716446655440000",
         ]);
+    }
+
+    #[test]
+    fn test_pane_exit_code_format() {
+        assert_eq!(super::parse_pane_status("0\n"), Some(0));
+        assert_eq!(super::parse_pane_status("1\n"), Some(1));
+        assert_eq!(super::parse_pane_status("137\n"), Some(137));
+        assert_eq!(super::parse_pane_status("\n"), None);
+        assert_eq!(super::parse_pane_status(""), None);
+        assert_eq!(super::parse_pane_status("not-a-number\n"), None);
+    }
+
+    #[test]
+    fn test_new_session_sets_remain_on_exit() {
+        let options = super::session_options();
+        assert!(
+            options.iter().any(|(k, _)| *k == "remain-on-exit"),
+            "remain-on-exit must be set so exit codes can be captured"
+        );
     }
 }

@@ -24,8 +24,8 @@ Phase 3 is nearly complete. The mesh now supports agent chat, code-server sessio
 - **MCP tools** — `ghost_recall`, `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines`, `ghost_list_agents`, `ghost_spawn_remote_session` for active agent interaction
 - **Intelligence layer** — embedded LLM-powered memory system: pre-session enrichment with lessons, post-session extraction, `ghost_recall` for on-demand retrieval
 - **Outcome log** — agents report work outcomes, daemon auto-captures terminal lifecycle and session exits with exit codes, exposed via MCP
-- **`ghost` CLI** — `configure`, `status`, `agents`, `chat`, `projects`, `setup claude` subcommands
-- **Project system** — `.ghost/config.json` manifest with agents, machines, commands, environment; auto-registered on session creation
+- **`ghost` CLI** — `configure`, `status`, `agents`, `chat`, `projects`, `setup claude` subcommands; `chat` provides interactive streaming with status indicators
+- **Project system** — `.ghost/config.json` manifest with agents, machines, commands, environment; auto-registered on session creation; `configure` reads and merges existing config
 - **Agent detection** — discovers Claude Code, Hermes, Ollama, Aider, OpenClaw; custom agents via `~/.config/ghost-protocol/agents.json`
 - **Agent chat** — chat sessions with agent-specific adapters (Claude stream-JSON, Ollama delimiter, generic fallback); message storage with pagination
 - **Desktop AgentsView** — machine + agent picker, agent launch with workdir selection, inline Claude API key setup
@@ -132,8 +132,6 @@ Full spec: `docs/superpowers/specs/2026-04-05-agent-discovery-design.md`
 
 **Remaining refinements:**
 
-- `ghost chat` CLI is a placeholder directing to desktop app (no interactive TUI)
-- `ghost configure` doesn't fully read/parse existing `.ghost/config.json`
 - No desktop UI for custom agent registration (manual JSON editing)
 - Hermes adapter uses generic parser — could benefit from Hermes-specific output parsing
 

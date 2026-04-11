@@ -154,12 +154,7 @@ export function ApprovalsTab({ daemonUrl, activeSession, onPendingCountChange }:
     .slice(0, 10);
 
   if (approvals.length === 0 && !agentApprovalHint) {
-    return (
-      <div className="empty-state approvals-empty-state">
-        <div>No daemon approval requests</div>
-        <div className="muted">Agent-native approval prompts can still appear inside the active session.</div>
-      </div>
-    );
+    return null;
   }
 
   return (

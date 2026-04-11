@@ -6,7 +6,7 @@ A unified control plane for AI agents across all your devices. Run terminals, ch
 
 ## Current status: v0.2.5
 
-The desktop app and backend daemon are functional for multi-machine terminal sharing over Tailscale, with per-machine permissions, auto-discovery, and agent observability.
+Phase 3 is nearly complete. The mesh now supports agent chat, code-server sessions, observability, and an embedded intelligence layer — on top of the multi-machine terminal sharing, permissions, and auto-discovery from earlier phases.
 
 ### What works
 
@@ -21,13 +21,21 @@ The desktop app and backend daemon are functional for multi-machine terminal sha
 - **Per-machine permissions** — 4 tiers (full-access, approval-required, read-only, no-access) enforced by daemon
 - **Approval flow** — write operations from approval-required peers queued for owner approval via desktop notification
 - **MCP resource server** — 7 read-only resources exposing machine info, sessions, hosts, outcomes, and context briefing
-- **MCP tools** — `ghost_recall`, `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines` for active agent interaction
+- **MCP tools** — `ghost_recall`, `ghost_report_outcome`, `ghost_check_mesh`, `ghost_list_machines`, `ghost_list_agents`, `ghost_spawn_remote_session` for active agent interaction
 - **Intelligence layer** — embedded LLM-powered memory system: pre-session enrichment with lessons, post-session extraction, `ghost_recall` for on-demand retrieval
-- **Outcome log** — agents report work outcomes, daemon auto-captures terminal lifecycle, exposed via MCP
-- **CLI tools** — `status`, `sessions`, `hosts`, `info` subcommands with `--json` flag
+- **Outcome log** — agents report work outcomes, daemon auto-captures terminal lifecycle and session exits with exit codes, exposed via MCP
+- **`ghost` CLI** — `configure`, `status`, `agents`, `chat`, `projects`, `setup claude` subcommands
+- **Project system** — `.ghost/config.json` manifest with agents, machines, commands, environment; auto-registered on session creation
+- **Agent detection** — discovers Claude Code, Hermes, Ollama, Aider, OpenClaw; custom agents via `~/.config/ghost-protocol/agents.json`
+- **Agent chat** — chat sessions with agent-specific adapters (Claude stream-JSON, Ollama delimiter, generic fallback); message storage with pagination
+- **Desktop AgentsView** — machine + agent picker, agent launch with workdir selection, inline Claude API key setup
+- **Unified session types** — terminal, chat, and code-server sessions with type-specific rendering
+- **Code-server management** — start/stop/adopt code-server instances, background detection scan, desktop panel with status
+- **Agent observability** — right panel mesh dashboard with per-machine health cards, active agents list, recent activity feed, collapsible approvals
+- **Session exit detection** — tmux remain-on-exit, exit code capture, auto-logged outcomes, terminal notification
+- **Terminal help text** — ANSI-formatted welcome showing available ghost commands
 - **Log viewer** — unified client + server log stream with filtering and export
 - **Settings page** — permission management per host with tier dropdowns
-- **Right panel** — approval queue with approve/deny and countdown timers
 - **Packaged release** — `scripts/release.sh <version>` syncs version metadata, runs focused checks, and builds a redistributable tarball with install script
 - **Wayland compatibility** — `.desktop` launcher includes WebKit/GDK workarounds
 
@@ -103,22 +111,31 @@ Terminal sharing, local PTY, multi-host connections over Tailscale.
 
 ---
 
-## Phase 3 (next): Agent Chat, Remote Dev, Observability
+## Phase 3 (nearly complete): Agent Chat, Remote Dev, Observability
 
 **Goal:** Three high-value features that fundamentally change how you interact with the mesh — chat with any agent on any machine, develop remotely via code-server, and observe all agents in real time.
 
-### 3a: Ghost CLI, Project System & Agent Chat (high priority)
+### 3a: Ghost CLI, Project System & Agent Chat ✓
 
 Full spec: `docs/superpowers/specs/2026-04-05-agent-discovery-design.md`
 
-- `ghost` CLI binary: `init`, `status`, `agents`, `chat`, `projects`, `help`
+- `ghost` CLI binary: `configure`, `status`, `agents`, `chat`, `projects`, `setup claude`, `help`
 - `.ghost/config.json` project manifest — agents, machines, commands, environment
 - Daemon project registry + agent detection (Claude Code, Hermes, Ollama, Aider, OpenClaw)
-- Custom agent registration via config
-- Chat sessions wrapping terminal sessions with agent-specific parsing adapters
+- Custom agent registration via `~/.config/ghost-protocol/agents.json`
+- Chat sessions wrapping terminal sessions with agent-specific parsing adapters (Claude stream-JSON, Ollama, generic)
 - Unified session types: terminal, chat, code-server
 - Terminal help text showing available ghost commands on open
-- Desktop ChatView revived with machine + agent picker
+- Desktop AgentsView with machine + agent picker, inline Claude setup
+- Auto-register projects on session creation
+- Managed Claude launch with API key / bearer token / Bedrock / Vertex / Foundry auth
+
+**Remaining refinements:**
+
+- `ghost chat` CLI is a placeholder directing to desktop app (no interactive TUI)
+- `ghost configure` doesn't fully read/parse existing `.ghost/config.json`
+- No desktop UI for custom agent registration (manual JSON editing)
+- Hermes adapter uses generic parser — could benefit from Hermes-specific output parsing
 
 ### 3a-next: Embedded Intelligence Layer ✓
 

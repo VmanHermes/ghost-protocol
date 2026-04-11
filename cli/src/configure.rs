@@ -6,7 +6,7 @@ struct ExistingConfig {
     name: Option<String>,
     agents: Vec<ConfigAgent>,
     commands: ConfigCommands,
-    environment: std::collections::HashMap<String, String>,
+    environment: std::collections::BTreeMap<String, String>,
     /// Fields we preserve but don't prompt for
     extra: serde_json::Value,
 }
@@ -38,7 +38,7 @@ fn load_existing_config(workdir: &std::path::Path) -> Option<ExistingConfig> {
                 .interact()
                 .unwrap_or(false);
             if !proceed {
-                std::process::exit(0);
+                return None;
             }
             return None;
         }
@@ -237,13 +237,9 @@ pub async fn run(daemon_url: &str) -> Result<(), String> {
 }
 
 fn prompt_command(label: &str, existing: Option<&str>) -> Result<Option<String>, String> {
-    let prompt = match existing {
-        Some(val) => format!("  {label} [{val}]"),
-        None => format!("  {label}"),
-    };
     let default = existing.unwrap_or("").to_string();
     let input: String = Input::new()
-        .with_prompt(&prompt)
+        .with_prompt(format!("  {label}"))
         .default(default)
         .allow_empty(true)
         .interact_text()
@@ -258,8 +254,8 @@ fn prompt_command(label: &str, existing: Option<&str>) -> Result<Option<String>,
 }
 
 fn prompt_environment(
-    existing: &std::collections::HashMap<String, String>,
-) -> Result<std::collections::HashMap<String, String>, String> {
+    existing: &std::collections::BTreeMap<String, String>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
     let mut env = existing.clone();
 
     if !env.is_empty() {

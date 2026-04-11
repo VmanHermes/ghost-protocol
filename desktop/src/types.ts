@@ -396,4 +396,19 @@ export type ChatWsEvent =
   | ChatStatusEvent
   | SessionMetaEvent;
 
+export type OutcomeRecord = {
+  id: string;
+  source: string;
+  sourceHostId: string | null;
+  category: string;
+  action: string;
+  description: string | null;
+  targetMachine: string | null;
+  status: string;
+  exitCode: number | null;
+  durationSecs: number | null;
+  metadataJson: string | null;
+  createdAt: string;
+};
+
 export type SessionMode = "chat" | "terminal";

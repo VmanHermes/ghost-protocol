@@ -11,6 +11,7 @@ import type {
   TerminalSession,
   WorkSessionViews,
   CodeServerInfo,
+  OutcomeRecord,
 } from "./types";
 
 export function wsUrlFromHttp(baseUrl: string) {
@@ -222,6 +223,16 @@ export async function listChatMessages(
 ): Promise<ChatMessage[]> {
   const query = limit ? `?limit=${limit}` : "";
   return api<ChatMessage[]>(daemonUrl, `/api/chat/sessions/${sessionId}/messages${query}`);
+}
+
+export async function listOutcomes(
+  daemonUrl: string,
+  limit = 10,
+  category?: string,
+): Promise<OutcomeRecord[]> {
+  let query = `?limit=${limit}`;
+  if (category) query += `&category=${encodeURIComponent(category)}`;
+  return api<OutcomeRecord[]>(daemonUrl, `/api/outcomes${query}`);
 }
 
 export async function sendChatMessage(

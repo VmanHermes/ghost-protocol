@@ -5,7 +5,9 @@
 ![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61dafb)
 ![Backend](https://img.shields.io/badge/backend-Rust-dea584)
 
-Ghost Protocol is a multi-machine AI agent control plane built on Tailscale. Manage terminals, chat with agents, and orchestrate work across your mesh — with per-machine permissions, auto-discovery, and outcome tracking.
+Ghost Protocol is a multi-machine AI agent control plane built on Tailscale. Your machines become a mesh where AI agents are first-class citizens — they can run on any device, remember what happened before, and report back what they did. Instead of managing terminals and agents per-machine, you get a single control plane that spans all your hardware.
+
+**[Why this exists](docs/vision.md)** · **[Project plan & roadmap](docs/project-plan.md)** · **[Runbook](docs/runbook.md)**
 
 ## What it does
 
@@ -270,6 +272,6 @@ bash scripts/release.sh 0.2.5
 
 ## Docs
 
+- [Vision](docs/vision.md) — why this exists and where it's going
 - [Project plan](docs/project-plan.md) — roadmap and current status
-- [Architecture](docs/architecture.md) — system design
 - [Runbook](docs/runbook.md) — operational reference

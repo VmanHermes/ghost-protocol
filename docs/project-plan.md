@@ -175,11 +175,13 @@ Real-time view of all agents running across the mesh — what they're doing, res
 
 ## Phase 4: Mobile + Polish
 
-**Goal:** iPhone support and cross-platform polish.
+**Goal:** iPhone support and cross-platform polish. Mobile-first means feed-first — a timeline of agent actions, not a raw terminal.
 
-- Native iOS app or responsive web client
+- Native iOS app or responsive PWA
+- **Activity feed as primary mobile UI** — timeline of agent actions ("committed 3 files", "tests failed", "awaiting approval") with tap-to-expand into terminal detail; outcome log and intelligence layer already capture this data
 - Push notifications for agent events and approval requests
-- Remote screenshots
+- "While you were offline" summary powered by the intelligence layer
+- Terminal view available but secondary to the feed
 - Tailscale ACL integration beyond CIDR allowlisting
 
 ---
@@ -216,6 +218,19 @@ Ideas with potential but not yet prioritized. May be promoted to a phase when re
 
 - Third-party agent adapter plugins (beyond built-in Claude/Hermes/Ollama/Aider/OpenClaw)
 - Standard interface for parsing agent output into chat messages
+
+### Credential isolation / proxy trust
+
+- Trusted machine (e.g. laptop) acts as API key vault for the mesh
+- Remote agents route inference requests through the vault machine for signing
+- Keys never leave trusted hardware; untrusted/shared machines get intelligence without secrets
+- Extends the permission model from access control to credential delegation
+
+### Session timeline scrub bar
+
+- Terminal chunks are already recorded in SQLite — expose a timeline UI
+- Scrub bar at the bottom of terminal view to replay PTY state at any point
+- Useful when agent output scrolls past too fast or for reviewing what happened during unattended sessions
 
 ---
 

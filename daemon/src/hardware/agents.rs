@@ -28,15 +28,15 @@ impl ManagedClaudeLaunch {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ManagedClaudeConfig {
+pub(crate) struct ManagedClaudeConfig {
     #[serde(default)]
-    enabled: bool,
+    pub enabled: bool,
     #[serde(default)]
-    api_key: Option<String>,
+    pub api_key: Option<String>,
     #[serde(default)]
-    auth_token: Option<String>,
+    pub auth_token: Option<String>,
     #[serde(default)]
-    base_url: Option<String>,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,7 +315,7 @@ fn copy_config_if_missing(name: &str, value: Option<String>, env: &mut HashMap<S
     }
 }
 
-fn load_managed_claude_config() -> Result<Option<ManagedClaudeConfig>, String> {
+pub(crate) fn load_managed_claude_config() -> Result<Option<ManagedClaudeConfig>, String> {
     let path = managed_claude_config_path();
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
@@ -330,7 +330,7 @@ fn load_managed_claude_config() -> Result<Option<ManagedClaudeConfig>, String> {
         .map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
 
-fn managed_claude_config_path() -> PathBuf {
+pub(crate) fn managed_claude_config_path() -> PathBuf {
     ghost_config_dir().join("managed-claude.json")
 }
 

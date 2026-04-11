@@ -3117,3 +3117,96 @@ pub async fn call_ghost_tool_proxy(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/setup/claude/status (localhost-only)
+// ---------------------------------------------------------------------------
+
+pub async fn get_claude_setup_status(
+    _guard: RequireLocalhostOnly,
+) -> Json<serde_json::Value> {
+    let configured = match crate::hardware::agents::load_managed_claude_config() {
+        Ok(Some(config)) => {
+            config.enabled
+                && (config.api_key.as_ref().is_some_and(|k| !k.trim().is_empty())
+                    || config.auth_token.as_ref().is_some_and(|t| !t.trim().is_empty()))
+        }
+        _ => false,
+    };
+    Json(serde_json::json!({ "configured": configured }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/setup/claude (localhost-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupClaudeBody {
+    pub api_key: Option<String>,
+    pub auth_token: Option<String>,
+    pub base_url: Option<String>,
+}
+
+pub async fn setup_claude(
+    _guard: RequireLocalhostOnly,
+    Json(body): Json<SetupClaudeBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let has_key = body.api_key.as_ref().is_some_and(|k| !k.trim().is_empty());
+    let has_token = body.auth_token.as_ref().is_some_and(|t| !t.trim().is_empty());
+    if !has_key && !has_token {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "apiKey or authToken is required" })),
+        ));
+    }
+
+    let config = crate::hardware::agents::ManagedClaudeConfig {
+        enabled: true,
+        api_key: body.api_key,
+        auth_token: body.auth_token,
+        base_url: body.base_url,
+    };
+
+    let path = crate::hardware::agents::managed_claude_config_path();
+    let dir = path.parent().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "invalid config path" })),
+        )
+    })?;
+
+    std::fs::create_dir_all(dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("failed to create dir: {e}") })),
+        )
+    })?;
+
+    let json = serde_json::to_string_pretty(&config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("serialize error: {e}") })),
+        )
+    })?;
+
+    std::fs::write(&path, &json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("write error: {e}") })),
+        )
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&path, perms).ok();
+        }
+    }
+
+    info!("Claude setup saved via API to {}", path.display());
+    Ok(Json(serde_json::json!({ "ok": true })))
+}

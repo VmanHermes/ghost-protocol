@@ -404,6 +404,8 @@ pub async fn run(
         )
         .route("/api/code-server/adopt", post(http::adopt_code_server))
         .route("/api/intelligence/recall", post(http::recall_memories))
+        .route("/api/setup/claude/status", get(http::get_claude_setup_status))
+        .route("/api/setup/claude", post(http::setup_claude))
         .route("/api/ghost/tools/{name}", post(http::call_ghost_tool_proxy))
         .with_state(state)
         .layer(middleware::from_fn(cors_layer))

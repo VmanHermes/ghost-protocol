@@ -156,15 +156,17 @@ Run code-server (VS Code in browser) on machine A, access it from machine B via 
 - code-server lifecycle managed like terminal sessions (create, monitor, terminate)
 - Tunneled through Tailscale — no port forwarding or public exposure needed
 
-### 3c: Agent Observability (high priority)
+### 3c: Agent Observability ✓
 
-Real-time view of all agents running across the mesh — what they're doing, resource usage, status.
+Full spec: `docs/superpowers/specs/2026-04-11-agent-observability-design.md`
 
-- Right panel (currently approvals-only) expands to show active agents across all connected machines
-- Each agent entry: name, machine, status (running/idle/error), current task, token usage, duration
-- Agent events streamed via WebSocket from each connected daemon
-- Click an agent to see its conversation/output stream
-- Ties into the outcome log — completed agent work appears as outcomes
+Right panel transformed into a mesh observability dashboard with stacked sections.
+
+- Collapsible approvals section — hidden entirely when no pending approvals
+- Per-machine health cards — hostname, online/offline status, RAM/GPU stats, active session count
+- Active agents list — agent name, machine, workdir, status dot, duration; click to navigate to session
+- Recent activity feed — last 10 outcomes from the outcome log with exit codes, duration, relative timestamps
+- All data from existing sources — no new daemon endpoints needed
 
 ### 3d: Session exit detection ✓
 

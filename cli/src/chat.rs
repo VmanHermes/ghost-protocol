@@ -23,11 +23,16 @@ struct SessionRecord {
 
 async fn resolve_agent(daemon_url: &str, agent_id: Option<&str>) -> Result<AgentInfo, String> {
     let client = reqwest::Client::new();
-    let agents: Vec<AgentInfo> = client
+    let resp = client
         .get(format!("{daemon_url}/api/agents"))
         .send()
         .await
-        .map_err(|e| format!("Cannot connect to Ghost Protocol daemon at {daemon_url}: {e}"))?
+        .map_err(|e| format!("Cannot connect to Ghost Protocol daemon at {daemon_url}: {e}"))?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Failed to fetch agents: {body}"));
+    }
+    let agents: Vec<AgentInfo> = resp
         .json()
         .await
         .map_err(|e| format!("Failed to parse agents: {e}"))?;
@@ -69,25 +74,30 @@ async fn create_session(daemon_url: &str, agent_id: &str) -> Result<String, Stri
     let workdir = std::env::current_dir()
         .map_err(|e| format!("Cannot determine working directory: {e}"))?;
     let client = reqwest::Client::new();
-    let resp: CreateSessionResponse = client
+    let resp = client
         .post(format!("{daemon_url}/api/chat/sessions"))
         .json(&serde_json::json!({
-            "agent_id": agent_id,
+            "agentId": agent_id,
             "workdir": workdir.to_string_lossy(),
         }))
         .send()
         .await
-        .map_err(|e| format!("Failed to create chat session: {e}"))?
+        .map_err(|e| format!("Failed to create chat session: {e}"))?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Failed to create chat session: {body}"));
+    }
+    let parsed: CreateSessionResponse = resp
         .json()
         .await
         .map_err(|e| format!("Failed to parse session response: {e}"))?;
-    Ok(resp.session.id)
+    Ok(parsed.session.id)
 }
 
 pub async fn run(daemon_url: &str, agent: Option<&str>) -> Result<(), String> {
     let agent_info = resolve_agent(daemon_url, agent).await?;
     let session_id = create_session(daemon_url, &agent_info.id).await?;
-    println!("Ghost Protocol — chatting with {} (session {})", agent_info.name, &session_id[..8]);
+    println!("Ghost Protocol — chatting with {} (session {})", agent_info.name, session_id.get(..8).unwrap_or(&session_id));
     println!("Type /exit or Ctrl+C to end session.\n");
 
     // Placeholder — interactive loop added in next task

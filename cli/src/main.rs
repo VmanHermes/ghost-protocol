@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+mod chat;
 mod commands;
 mod configure;
 mod detect;
@@ -47,8 +48,8 @@ enum Commands {
     Projects,
     /// Start a chat with an agent
     Chat {
-        /// Agent ID (e.g., hermes, ollama:gemma4)
-        agent: String,
+        /// Agent ID (e.g., hermes, ollama:gemma4). Omit to pick interactively.
+        agent: Option<String>,
     },
 }
 
@@ -69,7 +70,7 @@ async fn main() {
         Commands::Status => commands::status(&cli.daemon_url).await,
         Commands::Agents => commands::agents(&cli.daemon_url).await,
         Commands::Projects => commands::projects(&cli.daemon_url).await,
-        Commands::Chat { agent } => commands::chat(&cli.daemon_url, &agent).await,
+        Commands::Chat { agent } => chat::run(&cli.daemon_url, agent.as_deref()).await,
     };
     if let Err(e) = result {
         eprintln!("Error: {e}");

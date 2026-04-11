@@ -48,9 +48,3 @@ pub async fn projects(daemon_url: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
-pub async fn chat(_daemon_url: &str, agent: &str) -> Result<(), String> {
-    println!("Starting chat with {agent}...");
-    println!("(Full chat session support will be available in the desktop app. Use the Ghost Protocol desktop to chat with agents.)");
-    Ok(())
-}

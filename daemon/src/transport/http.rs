@@ -109,6 +109,39 @@ fn normalize_project_config_json(config: &serde_json::Value) -> String {
     serde_json::to_string(&supervisor::normalize_project_config(config)).unwrap_or_else(|_| "{}".to_string())
 }
 
+/// Auto-register a project for a workdir if none exists yet.
+/// Reads `.ghost/config.json` from the workdir if present.
+/// Skips if workdir is empty or looks like a bare home directory.
+fn auto_register_project(store: &crate::store::Store, workdir: &str) -> Option<String> {
+    let expanded = crate::workdir::expand_workdir(workdir);
+    let path = std::path::Path::new(&expanded);
+
+    // Skip home directories and empty/relative paths
+    if expanded.is_empty() || expanded == "~" {
+        return None;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if expanded == home {
+            return None;
+        }
+    }
+
+    // Try to read .ghost/config.json
+    let config_override = path
+        .join(".ghost")
+        .join("config.json")
+        .to_str()
+        .and_then(|p| std::fs::read_to_string(p).ok());
+
+    match store.get_or_create_project_for_workdir(&expanded, config_override.as_deref()) {
+        Ok(project) => Some(project.id),
+        Err(e) => {
+            tracing::warn!(workdir = %expanded, error = %e, "auto-register project failed");
+            None
+        }
+    }
+}
+
 fn build_ghost_mcp_config(bind_port: u16) -> Option<String> {
     let daemon_path = std::env::current_exe().ok()?;
     let command = daemon_path.to_str()?.to_string();
@@ -670,7 +703,7 @@ async fn create_terminal_driver_session(
             &workdir,
             command_override,
             crate::terminal::manager::CreateSessionOptions {
-                project_id: body.project_id.clone(),
+                project_id: body.project_id.clone().or_else(|| auto_register_project(&state.store, &workdir)),
                 parent_session_id: body.parent_session_id.clone(),
                 root_session_id: body.root_session_id.clone(),
                 host_id: None,
@@ -1914,6 +1947,9 @@ async fn create_structured_chat_driver_session(
         .or_else(|| body.parent_session_id.clone());
 
     let cmd = vec![agent.command.clone()];
+    let effective_project_id = body.project_id.clone().or_else(|| {
+        auto_register_project(&state.store, &workdir)
+    });
     let mut session = state
         .store
         .create_work_session(crate::store::sessions::CreateWorkSessionParams {
@@ -1923,7 +1959,7 @@ async fn create_structured_chat_driver_session(
             workdir: &workdir,
             command: &cmd,
             session_type: "chat",
-            project_id: body.project_id.as_deref(),
+            project_id: effective_project_id.as_deref(),
             parent_session_id: body.parent_session_id.as_deref(),
             root_session_id: root_session_id.as_deref(),
             host_id: None,
@@ -1937,8 +1973,7 @@ async fn create_structured_chat_driver_session(
         })
         .map_err(|e| format!("db error: {e}"))?;
 
-    let project = body
-        .project_id
+    let project = effective_project_id
         .as_deref()
         .and_then(|project_id| state.store.get_project(project_id).ok().flatten());
     let (mcp_config, system_prompt, allowed_tools) = if agent.supports_mcp {

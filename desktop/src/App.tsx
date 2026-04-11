@@ -657,7 +657,15 @@ function App() {
         </div>
       </section>
 
-      <RightPanel daemonUrl={activeSessionBaseUrl} activeSession={activeSession} />
+      <RightPanel
+        daemonUrl={LOCAL_DAEMON}
+        activeSession={activeSession}
+        localMachineInfo={localMachineInfo}
+        localMachineStatus={localMachineStatus}
+        hostConnections={hostConnections}
+        sessions={allFlatSessions}
+        onSelectSession={setActiveTerminalSessionId}
+      />
     </main>
   );
 }

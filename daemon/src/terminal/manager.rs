@@ -188,37 +188,134 @@ Commands:\n\
                     break;
                 }
 
-                if tmux::has_session(&session_id) {
+                // Session gone entirely (tmux crashed or was killed externally)
+                if !tmux::has_session(&session_id) {
+                    info!(session_id = %session_id, "terminal session disappeared");
+                    let now = Utc::now().to_rfc3339();
+                    let _ = store.update_terminal_session(
+                        &session_id,
+                        Some("exited"),
+                        None,
+                        Some(&now),
+                        None,
+                        None,
+                        None,
+                    );
+                    Self::log_session_exit_outcome(&store, &current, None, &now);
+                    Self::notify_session_exit(&store, &session_id, None, &broadcasters).await;
+                    sessions.lock().await.remove(&session_id);
+                    broadcasters.lock().await.remove(&session_id);
+                    break;
+                }
+
+                // Pane still alive — keep polling
+                if !tmux::is_pane_dead(&session_id) {
                     continue;
                 }
 
-                info!(session_id = %session_id, "terminal session exited");
+                // Pane exited — capture exit code before destroying the session
+                let exit_code = tmux::pane_exit_code(&session_id);
+                let exit_status = match exit_code {
+                    Some(0) => "exited",
+                    Some(_) => "error",
+                    None => "exited",
+                };
+
+                info!(
+                    session_id = %session_id,
+                    exit_code = ?exit_code,
+                    "terminal session exited"
+                );
+
                 let now = Utc::now().to_rfc3339();
                 let _ = store.update_terminal_session(
                     &session_id,
-                    Some("exited"),
+                    Some(exit_status),
                     None,
                     Some(&now),
                     None,
                     None,
-                    None,
+                    exit_code,
                 );
 
-                if let Ok(chunk) = store.append_terminal_chunk(&session_id, "system", "\r\n[session exited]\r\n") {
-                    let broadcaster = {
-                        let guard = broadcasters.lock().await;
-                        guard.get(&session_id).cloned()
-                    };
-                    if let Some(bc) = broadcaster {
-                        bc.send(chunk);
-                    }
-                }
+                // Kill the tmux session now that we've captured the exit code
+                tmux::kill_session(&session_id);
+
+                Self::log_session_exit_outcome(&store, &current, exit_code, &now);
+                Self::notify_session_exit(&store, &session_id, exit_code, &broadcasters).await;
 
                 sessions.lock().await.remove(&session_id);
                 broadcasters.lock().await.remove(&session_id);
                 break;
             }
         });
+    }
+
+    /// Computes session duration from started_at to finished_at.
+    fn compute_duration(started_at: Option<&str>, finished_at: &str) -> Option<f64> {
+        let start = started_at?;
+        let start_dt = chrono::DateTime::parse_from_rfc3339(start).ok()?;
+        let end_dt = chrono::DateTime::parse_from_rfc3339(finished_at).ok()?;
+        Some((end_dt - start_dt).num_seconds() as f64)
+    }
+
+    /// Creates an outcome record for a terminal session exit.
+    fn log_session_exit_outcome(
+        store: &Store,
+        session: &TerminalSessionRecord,
+        exit_code: Option<i32>,
+        finished_at: &str,
+    ) {
+        let status = match exit_code {
+            Some(0) => "success",
+            Some(_) => "failed",
+            None => "success",
+        };
+        let duration = Self::compute_duration(session.started_at.as_deref(), finished_at);
+        let metadata = serde_json::json!({
+            "sessionId": session.id,
+            "workdir": session.workdir,
+            "agentId": session.agent_id,
+            "projectId": session.project_id,
+        });
+
+        if let Err(e) = store.create_outcome(
+            &Uuid::new_v4().to_string(),
+            "daemon",
+            None,
+            "terminal",
+            "session_exited",
+            Some(&format!("Terminal session exited in {}", session.workdir)),
+            None,
+            status,
+            exit_code,
+            duration,
+            Some(&metadata.to_string()),
+        ) {
+            warn!(session_id = %session.id, error = %e, "failed to log session exit outcome");
+        }
+    }
+
+    /// Sends exit notification to connected WebSocket clients.
+    async fn notify_session_exit(
+        store: &Store,
+        session_id: &str,
+        exit_code: Option<i32>,
+        broadcasters: &Arc<Mutex<HashMap<String, Arc<SessionBroadcaster>>>>,
+    ) {
+        let msg = match exit_code {
+            Some(code) => format!("\r\n[session exited with code {code}]\r\n"),
+            None => "\r\n[session exited]\r\n".to_string(),
+        };
+        if let Ok(chunk) = store.append_terminal_chunk(session_id, "system", &msg) {
+            let broadcaster = {
+                let guard = broadcasters.lock().await;
+                guard.get(session_id).cloned()
+            };
+            if let Some(bc) = broadcaster {
+                bc.send(chunk);
+            }
+        }
     }
 
     /// Ensures a PTY attach process is running for the given session.

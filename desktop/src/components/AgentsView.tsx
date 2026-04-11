@@ -9,6 +9,7 @@ import {
   listDetectedCodeServers,
   listProjects,
   reopenWorkSession,
+  setupClaude,
   switchSessionMode,
 } from "../api";
 import { useChatSocket } from "../hooks/useChatSocket";
@@ -83,7 +84,12 @@ export function AgentsView({
     () => agents.filter((agent) => agent.launchSupported === false),
     [agents],
   );
-  const claudeLaunchNote = manualOnlyAgents.find((agent) => agent.id === "claude-code")?.launchNote ?? null;
+  const claudeManualOnlyAgent = manualOnlyAgents.find((agent) => agent.id === "claude-code") ?? null;
+  const [copiedSetupTargetId, setCopiedSetupTargetId] = useState<string | null>(null);
+  const [dismissedSetupTargets, setDismissedSetupTargets] = useState<Record<string, boolean>>({});
+  const [claudeApiKey, setClaudeApiKey] = useState("");
+  const [claudeSetupSaving, setClaudeSetupSaving] = useState(false);
+  const [claudeSetupError, setClaudeSetupError] = useState<string | null>(null);
 
   const activeSessions = sessions.filter((session) => session.status === "running" || session.status === "created");
   const previousSessions = sessions.filter((session) => session.status !== "running" && session.status !== "created");
@@ -131,6 +137,14 @@ export function AgentsView({
 
   const selectedTarget = targetOptions.find((target) => target.id === selectedTargetId) ?? targetOptions[0];
   const launchDaemonUrl = selectedTarget?.baseUrl ?? daemonUrl;
+  const claudeSetupCommand = "ghost setup claude";
+  const claudeSetupTargetLabel = selectedTarget?.isLocal
+    ? "this computer"
+    : (selectedTarget?.name ?? "this host");
+  const claudeSetupScopeNote = selectedTarget?.isLocal
+    ? "Claude setup is machine-local. If you later use another host, run this there too."
+    : `${selectedTarget?.name ?? "This host"} needs its own Claude setup even if your local machine is already configured.`;
+  const showClaudeSetupBanner = !!claudeManualOnlyAgent && !dismissedSetupTargets[selectedTargetId];
 
   useEffect(() => {
     if (selectedTargetId === "local") return;
@@ -214,6 +228,14 @@ export function AgentsView({
     return () => clearInterval(interval);
   }, [activeSessionBaseUrl, visible]);
 
+  useEffect(() => {
+    if (!copiedSetupTargetId) return;
+    const timer = window.setTimeout(() => {
+      setCopiedSetupTargetId((current) => (current === copiedSetupTargetId ? null : current));
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, [copiedSetupTargetId]);
+
   const handleSessionRenamed = useCallback(() => {
     void onRefreshSessions();
   }, [onRefreshSessions]);
@@ -244,6 +266,41 @@ export function AgentsView({
     ideMenuRef.current?.removeAttribute("open");
   }, []);
 
+  const launchShellSession = useCallback(async (target: typeof selectedTarget) => {
+    if (!target) return;
+
+    const workdir = launchWorkdir.trim() || undefined;
+    const projectId = selectedProjectId || undefined;
+
+    if (target.isLocal) {
+      const session = await onCreateLocalSession(workdir);
+      if (session?.id) {
+        onSelectSession(session.id);
+        setActiveMode("terminal");
+      }
+      return;
+    }
+
+    const session = await api<TerminalSession>(target.baseUrl, "/api/terminal/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "terminal",
+        name: "Shell",
+        projectId,
+        workdir,
+      }),
+    });
+    await onRefreshSessions();
+    onSelectSession(session.id);
+    setActiveMode("terminal");
+  }, [
+    launchWorkdir,
+    onCreateLocalSession,
+    onRefreshSessions,
+    onSelectSession,
+    selectedProjectId,
+  ]);
+
   const handleNewSession = useCallback(async () => {
     if (!selectedAgentId || !selectedTarget) return;
 
@@ -255,26 +312,7 @@ export function AgentsView({
       const projectId = selectedProjectId || undefined;
 
       if (selectedAgentId === "shell") {
-        if (selectedTarget.isLocal) {
-          const session = await onCreateLocalSession(workdir);
-          if (session?.id) {
-            onSelectSession(session.id);
-            setActiveMode("terminal");
-          }
-        } else {
-          const session = await api<TerminalSession>(launchDaemonUrl, "/api/terminal/sessions", {
-            method: "POST",
-            body: JSON.stringify({
-              mode: "terminal",
-              name: "Shell",
-              projectId,
-              workdir,
-            }),
-          });
-          await onRefreshSessions();
-          onSelectSession(session.id);
-          setActiveMode("terminal");
-        }
+        await launchShellSession(selectedTarget);
       } else if (selectedMode === "chat") {
         const result = await createChatSession(launchDaemonUrl, selectedAgentId, projectId, workdir);
         const sessionId: string = result.session?.id ?? result.session;
@@ -310,7 +348,67 @@ export function AgentsView({
     selectedMode,
     selectedProjectId,
     selectedTarget,
+    launchShellSession,
   ]);
+
+  const handleCopyClaudeSetup = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(claudeSetupCommand);
+      setCopiedSetupTargetId(selectedTargetId);
+    } catch {
+      setError("Failed to copy `ghost setup claude`.");
+    }
+  }, [claudeSetupCommand, selectedTargetId]);
+
+  const handleOpenClaudeSetupShell = useCallback(async () => {
+    if (!selectedTarget) return;
+
+    setError(null);
+    setSelectedAgentId("shell");
+    setSelectedMode("terminal");
+    setLoading(true);
+
+    try {
+      await launchShellSession(selectedTarget);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open a setup shell");
+    } finally {
+      setLoading(false);
+    }
+  }, [launchShellSession, selectedTarget]);
+
+  const handleDismissClaudeSetup = useCallback(() => {
+    setDismissedSetupTargets((current) => ({
+      ...current,
+      [selectedTargetId]: true,
+    }));
+  }, [selectedTargetId]);
+
+  const handleClaudeInlineSetup = useCallback(async () => {
+    if (!claudeApiKey.trim()) return;
+    setClaudeSetupSaving(true);
+    setClaudeSetupError(null);
+    try {
+      await setupClaude(daemonUrl, { apiKey: claudeApiKey.trim() });
+      setClaudeApiKey("");
+      setDismissedSetupTargets((current) => ({
+        ...current,
+        [selectedTargetId]: true,
+      }));
+      // Refresh agents list so Claude shows as launchable now
+      const items = await listAgents(launchDaemonUrl);
+      setAgents(items);
+      const launchable = items.filter((agent) => agent.launchSupported !== false);
+      setSelectedAgentId((current) => {
+        if (current && launchable.some((agent) => agent.id === current)) return current;
+        return launchable[0]?.id ?? "shell";
+      });
+    } catch (e) {
+      setClaudeSetupError(e instanceof Error ? e.message : "Setup failed");
+    } finally {
+      setClaudeSetupSaving(false);
+    }
+  }, [claudeApiKey, daemonUrl, launchDaemonUrl, selectedTargetId]);
 
   const handleSwitchMode = useCallback(async (newMode: SessionMode) => {
     if (!activeSessionId || newMode === activeMode) return;
@@ -550,9 +648,81 @@ export function AgentsView({
         {error && <span style={{ color: "var(--accent-red)", fontSize: "0.78rem" }}>{error}</span>}
       </div>
 
-      {claudeLaunchNote && (
-        <div style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
-          Claude Code remains available directly with Ghost MCP. {claudeLaunchNote}
+      {showClaudeSetupBanner && selectedTarget && (
+        <div className="agent-setup-banner">
+          <div className="agent-setup-copy">
+            <div className="agent-setup-title">
+              Set up managed Claude Code on {claudeSetupTargetLabel}
+            </div>
+            <div className="agent-setup-message">
+              Ghost can see Claude Code on this host, but it stays manual-only until the daemon host has API or cloud auth.
+              Run <code>{claudeSetupCommand}</code> once on {claudeSetupTargetLabel} so Ghost can launch managed Claude sessions there.
+            </div>
+            <div className="agent-setup-note">
+              You can still run Claude Code directly and attach Ghost through MCP in the meantime.
+            </div>
+            <div className="agent-setup-note">{claudeSetupScopeNote}</div>
+            {selectedTarget?.isLocal && (
+              <div style={{
+                marginTop: "8px",
+                padding: "8px 0",
+                borderTop: "1px solid var(--border, #333)",
+              }}>
+                <div style={{ fontSize: "12px", color: "var(--text-muted, #888)", marginBottom: "6px" }}>
+                  Or configure directly:
+                </div>
+                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                  <input
+                    type="password"
+                    placeholder="Anthropic API key"
+                    value={claudeApiKey}
+                    onChange={(e) => setClaudeApiKey(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleClaudeInlineSetup()}
+                    style={{
+                      flex: 1,
+                      padding: "5px 8px",
+                      background: "var(--bg-input, #1e1e1e)",
+                      border: "1px solid var(--border, #333)",
+                      borderRadius: "4px",
+                      color: "var(--text, #ccc)",
+                      fontSize: "13px",
+                    }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => void handleClaudeInlineSetup()}
+                    disabled={claudeSetupSaving || !claudeApiKey.trim()}
+                    style={{ opacity: claudeSetupSaving || !claudeApiKey.trim() ? 0.5 : 1 }}
+                  >
+                    {claudeSetupSaving ? "Saving..." : "Save"}
+                  </button>
+                </div>
+                {claudeSetupError && (
+                  <div style={{ marginTop: "4px", color: "var(--text-error, #f87171)", fontSize: "12px" }}>
+                    {claudeSetupError}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="agent-setup-command">
+            <code>{claudeSetupCommand}</code>
+            <div className="agent-setup-actions">
+              <button className="btn-secondary" onClick={() => void handleCopyClaudeSetup()}>
+                {copiedSetupTargetId === selectedTargetId ? "Copied" : "Copy command"}
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => void handleOpenClaudeSetupShell()}
+                disabled={loading}
+              >
+                {selectedTarget.isLocal ? "Open local shell" : "Open shell on host"}
+              </button>
+              <button className="agent-setup-dismiss" onClick={handleDismissClaudeSetup}>
+                Dismiss
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

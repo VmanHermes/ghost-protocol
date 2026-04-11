@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::Message;
@@ -106,7 +108,11 @@ pub async fn run(daemon_url: &str, agent: Option<&str>) -> Result<(), String> {
 }
 
 async fn run_event_loop(daemon_url: &str, session_id: &str) -> Result<(), String> {
-    let ws_url = daemon_url.replacen("http", "ws", 1);
+    let ws_url = if daemon_url.starts_with("https://") {
+        daemon_url.replacen("https://", "wss://", 1)
+    } else {
+        daemon_url.replacen("http://", "ws://", 1)
+    };
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("{ws_url}/ws"))
         .await
         .map_err(|e| format!("WebSocket connection failed: {e}"))?;
@@ -121,8 +127,7 @@ async fn run_event_loop(daemon_url: &str, session_id: &str) -> Result<(), String
         .map_err(|e| format!("Failed to subscribe: {e}"))?;
 
     // Split for concurrent read/write
-    let (ws_tx, mut ws_rx) = ws.split();
-    let _ws_tx = std::sync::Arc::new(tokio::sync::Mutex::new(ws_tx));
+    let (_ws_tx, mut ws_rx) = ws.split();
 
     // Input channel — readline thread sends user messages here
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<String>(16);
@@ -131,6 +136,9 @@ async fn run_event_loop(daemon_url: &str, session_id: &str) -> Result<(), String
     std::thread::spawn(move || {
         read_input_loop(input_tx);
     });
+
+    // HTTP client for sending messages (created once, reused per message)
+    let client = reqwest::Client::new();
 
     // Track whether we're mid-response (for blank line separator)
     let mut in_response = false;
@@ -150,7 +158,6 @@ async fn run_event_loop(daemon_url: &str, session_id: &str) -> Result<(), String
                             Some("chat_delta") => {
                                 let delta = event["delta"].as_str().unwrap_or("");
                                 print!("{delta}");
-                                use std::io::Write;
                                 std::io::stdout().flush().ok();
                                 in_response = true;
                             }
@@ -173,11 +180,7 @@ async fn run_event_loop(daemon_url: &str, session_id: &str) -> Result<(), String
                                         if in_response {
                                             println!();
                                         }
-                                        let code = event["exitCode"].as_i64();
-                                        match code {
-                                            Some(c) => println!("[session ended with code {c}]"),
-                                            None => println!("[session ended]"),
-                                        }
+                                        println!("[session ended]");
                                         return Ok(());
                                     }
                                     _ => {}
@@ -214,7 +217,6 @@ async fn run_event_loop(daemon_url: &str, session_id: &str) -> Result<(), String
                     }
                     Some(text) => {
                         // Send via HTTP (more reliable than WS for messages)
-                        let client = reqwest::Client::new();
                         if let Err(e) = send_message(&client, &daemon_url_owned, &session_id_owned, &text).await {
                             eprintln!("Failed to send message: {e}");
                         }
@@ -262,14 +264,14 @@ fn read_input_loop(tx: tokio::sync::mpsc::Sender<String>) {
 
                 // Multi-line: if line ends with \, continue reading
                 let full_input = if trimmed.ends_with('\\') {
-                    let mut buf = trimmed[..trimmed.len() - 1].to_string();
+                    let mut buf = trimmed.strip_suffix('\\').unwrap().to_string();
                     loop {
                         match rl.readline("...> ") {
                             Ok(cont) => {
                                 let cont = cont.trim_end();
                                 if cont.ends_with('\\') {
                                     buf.push('\n');
-                                    buf.push_str(&cont[..cont.len() - 1]);
+                                    buf.push_str(cont.strip_suffix('\\').unwrap());
                                 } else {
                                     buf.push('\n');
                                     buf.push_str(cont);

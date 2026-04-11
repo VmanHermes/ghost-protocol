@@ -178,6 +178,158 @@ async fn test_health_and_system_status() {
 }
 
 #[tokio::test]
+async fn test_session_exit_code_captured() {
+    with_daemon(|base| async move {
+        let client = reqwest::Client::new();
+
+        // Create a session (starts a default shell)
+        let resp = client
+            .post(format!("{base}/api/terminal/sessions"))
+            .json(&json!({
+                "mode": "local",
+                "name": "exit-test"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201);
+        let body: Value = resp.json().await.unwrap();
+        let session_id = body["id"].as_str().unwrap().to_string();
+
+        // Give the shell a moment to start, then send an exit command
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let resp = client
+            .post(format!(
+                "{base}/api/terminal/sessions/{session_id}/input"
+            ))
+            .json(&json!({ "input": "exit 42" }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "send_input returned {}",
+            resp.status()
+        );
+
+        // Wait for the exit monitor to detect the exit (polls every 1s)
+        tokio::time::sleep(Duration::from_secs(4)).await;
+
+        // Check session status and exit code
+        let resp = client
+            .get(format!("{base}/api/terminal/sessions"))
+            .send()
+            .await
+            .unwrap();
+        let sessions: Vec<Value> = resp.json().await.unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s["id"] == session_id)
+            .expect("session should still exist in listing");
+
+        assert_eq!(
+            session["status"], "error",
+            "non-zero exit should set status to error"
+        );
+        assert_eq!(
+            session["exitCode"], 42,
+            "exit code should be captured"
+        );
+        assert!(
+            session["finishedAt"].is_string(),
+            "finishedAt should be set"
+        );
+
+        // Check that an outcome was logged
+        let resp = client
+            .get(format!("{base}/api/outcomes?category=terminal"))
+            .send()
+            .await
+            .unwrap();
+        let outcomes: Vec<Value> = resp.json().await.unwrap();
+        let exit_outcome = outcomes
+            .iter()
+            .find(|o| o["action"] == "session_exited")
+            .expect("session_exited outcome should exist");
+
+        assert_eq!(exit_outcome["exitCode"], 42);
+        assert_eq!(exit_outcome["status"], "failed");
+        assert!(exit_outcome["durationSecs"].is_number());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_session_clean_exit_code_zero() {
+    with_daemon(|base| async move {
+        let client = reqwest::Client::new();
+
+        // Create a session (starts a default shell)
+        let resp = client
+            .post(format!("{base}/api/terminal/sessions"))
+            .json(&json!({
+                "mode": "local",
+                "name": "clean-exit-test"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201);
+        let body: Value = resp.json().await.unwrap();
+        let session_id = body["id"].as_str().unwrap().to_string();
+
+        // Give the shell a moment to start, then send an exit command
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let resp = client
+            .post(format!(
+                "{base}/api/terminal/sessions/{session_id}/input"
+            ))
+            .json(&json!({ "input": "exit 0" }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "send_input returned {}",
+            resp.status()
+        );
+
+        // Wait for exit detection
+        tokio::time::sleep(Duration::from_secs(4)).await;
+
+        let resp = client
+            .get(format!("{base}/api/terminal/sessions"))
+            .send()
+            .await
+            .unwrap();
+        let sessions: Vec<Value> = resp.json().await.unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s["id"] == session_id)
+            .expect("session should exist");
+
+        assert_eq!(session["status"], "exited");
+        assert_eq!(session["exitCode"], 0);
+
+        // Outcome should report success
+        let resp = client
+            .get(format!("{base}/api/outcomes?category=terminal"))
+            .send()
+            .await
+            .unwrap();
+        let outcomes: Vec<Value> = resp.json().await.unwrap();
+        let exit_outcome = outcomes
+            .iter()
+            .find(|o| o["action"] == "session_exited")
+            .expect("outcome should exist");
+
+        assert_eq!(exit_outcome["status"], "success");
+        assert_eq!(exit_outcome["exitCode"], 0);
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_hardware_endpoints() {
     with_daemon(|base| async move {
         let client = reqwest::Client::new();

@@ -1,4 +1,6 @@
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,7 +102,203 @@ pub async fn run(daemon_url: &str, agent: Option<&str>) -> Result<(), String> {
     println!("Ghost Protocol — chatting with {} (session {})", agent_info.name, session_id.get(..8).unwrap_or(&session_id));
     println!("Type /exit or Ctrl+C to end session.\n");
 
-    // Placeholder — interactive loop added in next task
-    println!("[chat loop not yet wired]");
+    run_event_loop(daemon_url, &session_id).await
+}
+
+async fn run_event_loop(daemon_url: &str, session_id: &str) -> Result<(), String> {
+    let ws_url = daemon_url.replacen("http", "ws", 1);
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("{ws_url}/ws"))
+        .await
+        .map_err(|e| format!("WebSocket connection failed: {e}"))?;
+
+    // Subscribe to chat events
+    let subscribe = serde_json::json!({
+        "op": "subscribe_chat",
+        "sessionId": session_id,
+    });
+    ws.send(Message::Text(subscribe.to_string().into()))
+        .await
+        .map_err(|e| format!("Failed to subscribe: {e}"))?;
+
+    // Split for concurrent read/write
+    let (ws_tx, mut ws_rx) = ws.split();
+    let _ws_tx = std::sync::Arc::new(tokio::sync::Mutex::new(ws_tx));
+
+    // Input channel — readline thread sends user messages here
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<String>(16);
+
+    // Spawn readline input thread
+    std::thread::spawn(move || {
+        read_input_loop(input_tx);
+    });
+
+    // Track whether we're mid-response (for blank line separator)
+    let mut in_response = false;
+    let daemon_url_owned = daemon_url.to_string();
+    let session_id_owned = session_id.to_string();
+
+    loop {
+        tokio::select! {
+            msg = ws_rx.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        let event: serde_json::Value = match serde_json::from_str(&text) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        match event["op"].as_str() {
+                            Some("chat_delta") => {
+                                let delta = event["delta"].as_str().unwrap_or("");
+                                print!("{delta}");
+                                use std::io::Write;
+                                std::io::stdout().flush().ok();
+                                in_response = true;
+                            }
+                            Some("chat_status") => {
+                                let status = event["status"].as_str().unwrap_or("");
+                                match status {
+                                    "thinking" => {
+                                        print_dim("[thinking...]");
+                                    }
+                                    "tool_use" => {
+                                        print_dim("[using tool...]");
+                                    }
+                                    "idle" => {
+                                        if in_response {
+                                            println!("\n");
+                                            in_response = false;
+                                        }
+                                    }
+                                    "exited" | "error" => {
+                                        if in_response {
+                                            println!();
+                                        }
+                                        let code = event["exitCode"].as_i64();
+                                        match code {
+                                            Some(c) => println!("[session ended with code {c}]"),
+                                            None => println!("[session ended]"),
+                                        }
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            Some("chat_message") => {
+                                // Complete messages arrive during history replay on subscribe.
+                                // During live streaming we get deltas instead, so skip replay messages.
+                            }
+                            Some("subscribed_chat") => {}
+                            Some("heartbeat") => {}
+                            Some("error") => {
+                                let msg = event["message"].as_str().unwrap_or("unknown error");
+                                return Err(format!("Server error: {msg}"));
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        println!("[connection closed]");
+                        return Ok(());
+                    }
+                    Some(Err(e)) => {
+                        return Err(format!("WebSocket error: {e}"));
+                    }
+                    _ => {}
+                }
+            }
+            input = input_rx.recv() => {
+                match input {
+                    Some(text) if text == "/exit" => {
+                        println!("Session ended.");
+                        return Ok(());
+                    }
+                    Some(text) => {
+                        // Send via HTTP (more reliable than WS for messages)
+                        let client = reqwest::Client::new();
+                        if let Err(e) = send_message(&client, &daemon_url_owned, &session_id_owned, &text).await {
+                            eprintln!("Failed to send message: {e}");
+                        }
+                    }
+                    None => return Ok(()), // Input channel closed
+                }
+            }
+        }
+    }
+}
+
+async fn send_message(client: &reqwest::Client, daemon_url: &str, session_id: &str, content: &str) -> Result<(), String> {
+    let resp = client
+        .post(format!("{daemon_url}/api/chat/sessions/{session_id}/message"))
+        .json(&serde_json::json!({"content": content}))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(body);
+    }
     Ok(())
+}
+
+fn print_dim(text: &str) {
+    println!("\x1b[2m{text}\x1b[0m");
+}
+
+fn read_input_loop(tx: tokio::sync::mpsc::Sender<String>) {
+    let mut rl = match rustyline::DefaultEditor::new() {
+        Ok(rl) => rl,
+        Err(e) => {
+            eprintln!("Failed to initialize input: {e}");
+            return;
+        }
+    };
+    loop {
+        match rl.readline("you> ") {
+            Ok(line) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Multi-line: if line ends with \, continue reading
+                let full_input = if trimmed.ends_with('\\') {
+                    let mut buf = trimmed[..trimmed.len() - 1].to_string();
+                    loop {
+                        match rl.readline("...> ") {
+                            Ok(cont) => {
+                                let cont = cont.trim_end();
+                                if cont.ends_with('\\') {
+                                    buf.push('\n');
+                                    buf.push_str(&cont[..cont.len() - 1]);
+                                } else {
+                                    buf.push('\n');
+                                    buf.push_str(cont);
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    buf
+                } else {
+                    trimmed.to_string()
+                };
+
+                let _ = rl.add_history_entry(&full_input);
+
+                if tx.blocking_send(full_input).is_err() {
+                    break; // Channel closed, main loop exited
+                }
+            }
+            Err(rustyline::error::ReadlineError::Interrupted) | // Ctrl+C
+            Err(rustyline::error::ReadlineError::Eof) => {       // Ctrl+D
+                let _ = tx.blocking_send("/exit".into());
+                break;
+            }
+            Err(e) => {
+                eprintln!("Input error: {e}");
+                break;
+            }
+        }
+    }
 }

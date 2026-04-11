@@ -33,7 +33,7 @@ The desktop app and backend daemon are functional for multi-machine terminal sha
 
 ### Known issues
 
-- Session exit detection (natural exit with exit code) not yet captured in outcome log — only create/terminate
+(none)
 
 ---
 
@@ -124,7 +124,7 @@ Full spec: `docs/superpowers/specs/2026-04-05-agent-discovery-design.md`
 
 Full spec: `docs/superpowers/specs/2026-04-07-intelligence-layer-design.md`
 
-**Design philosophy:** Ghost Protocol doesn't just connect you to agents — it orchestrates them using an agent of your choice as the intelligence layer. The system gets smarter over time.
+**Design philosophy:** Ghost Protocol doesn't just connect you to agents — it coordinates them using an agent of your choice as the intelligence layer. The system gets smarter over time.
 
 - Provider abstraction supporting API (Anthropic/OpenAI) and local Ollama backends
 - Hybrid memory — summarization for high-level recall, keyword search for specific retrieval
@@ -139,6 +139,7 @@ Full spec: `docs/superpowers/specs/2026-04-07-intelligence-layer-design.md`
 - API keys resolved from environment variables only — never stored in config files
 
 **Remaining refinements:**
+
 - sqlite-vec vector search (currently keyword fallback, structured metadata filtering is primary)
 - Memory deduplication during insertion (near-duplicate detection)
 - Provider retry/rate limiting on transient API failures
@@ -165,11 +166,13 @@ Real-time view of all agents running across the mesh — what they're doing, res
 - Click an agent to see its conversation/output stream
 - Ties into the outcome log — completed agent work appears as outcomes
 
-### 3d: Session exit detection
+### 3d: Session exit detection ✓
 
-- Detect natural session exits (PTY EOF) with exit codes
-- Auto-capture `session_exited` outcomes with duration and exit code
-- Richer data for future intelligence layers
+- tmux `remain-on-exit` keeps pane alive after process exit for exit code capture
+- `pane_exit_code()` queries `#{pane_dead_status}` before destroying the session
+- Exit monitor distinguishes clean exit (code 0 → "exited") from failure (non-zero → "error")
+- Auto-capture `session_exited` outcomes with exit code, duration, workdir, and agent metadata
+- Terminal notification shows exit code: `[session exited with code N]`
 
 ---
 
@@ -236,7 +239,7 @@ Ideas with potential but not yet prioritized. May be promoted to a phase when re
 
 ## Architecture principles
 
-- **Agent-agnostic** — Ghost Protocol discovers and wraps any agent runtime, doesn't replace them
+- **Agent-agnostic** — Ghost Protocol discovers and supervises any agent runtime, doesn't replace them
 - **Daemon is the source of truth** — all state flows through the Rust daemon
 - **Tailscale for networking** — WireGuard-encrypted mesh, no HTTPS certificates needed for security
 - **Desktop app is a thin client** — Tauri 2 + React, talks to daemon over HTTP + WebSocket

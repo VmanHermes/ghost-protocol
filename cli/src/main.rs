@@ -1,12 +1,23 @@
 use clap::{Parser, Subcommand};
 
 mod commands;
+mod configure;
 mod detect;
-mod init;
 mod setup;
 
 #[derive(Parser)]
-#[command(name = "ghost", about = "Ghost Protocol CLI")]
+#[command(
+    name = "ghost",
+    about = "Ghost Protocol CLI — multi-machine AI agent control plane",
+    after_help = "\x1b[2mQuick start:\n\
+  ghost status          Mesh overview (machines, sessions)\n\
+  ghost agents          Available agents across the mesh\n\
+  ghost chat <agent>    Start a chat with an agent\n\
+  ghost configure       Customize project settings (optional)\n\
+  ghost setup claude    Configure Claude API key for this machine\n\
+\n\
+  Documentation: ghost help <command>\x1b[0m"
+)]
 struct Cli {
     #[arg(
         long,
@@ -21,8 +32,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a Ghost Protocol project in the current directory
-    Init,
+    /// Customize project settings for the current directory
+    Configure,
     /// Configure machine-level Ghost integrations
     Setup {
         #[command(subcommand)]
@@ -51,7 +62,7 @@ enum SetupCommands {
 async fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
-        Commands::Init => init::run(&cli.daemon_url).await,
+        Commands::Configure => configure::run(&cli.daemon_url).await,
         Commands::Setup { target } => match target {
             SetupCommands::Claude => setup::run_claude().await,
         },

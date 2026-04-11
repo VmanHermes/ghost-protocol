@@ -5,7 +5,7 @@ pub async fn run(daemon_url: &str) -> Result<(), String> {
     let workdir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
     let dir_name = workdir.file_name().and_then(|n| n.to_str()).unwrap_or("project").to_string();
 
-    println!("Initializing Ghost Protocol project...\n");
+    println!("Configuring Ghost Protocol project...\n");
 
     let name: String = Input::new().with_prompt("Project name").default(dir_name).interact_text().map_err(|e| format!("input error: {e}"))?;
 
